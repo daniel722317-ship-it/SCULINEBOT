@@ -1,8 +1,8 @@
 ---
-title: SCULINEBOT
-emoji: 👁
-colorFrom: green
-colorTo: pink
+title: Linebot
+emoji: 🐢
+colorFrom: yellow
+colorTo: green
 sdk: docker
 pinned: false
 ---

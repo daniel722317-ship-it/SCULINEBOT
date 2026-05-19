@@ -1,0 +1,8 @@
+Flask # 執行LINE Bot Webhook Server需要的套件
+gunicorn # 執行正式的web server，讓他來反向代理執行中的Flask
+line-bot-sdk # LINE Bot的必須安裝項
+markdown # 讓輸出格式漂亮，並且解析markdown文件用的套件
+beautifulsoup4 # 讓輸出格式漂亮的套件
+openai # 使用OpenAI的模型(此次課程為示範不使用)
+google-genai # 使用Google Gemini API的套件
+Pillow # 處理圖片
