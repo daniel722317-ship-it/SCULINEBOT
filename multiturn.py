@@ -34,9 +34,30 @@ chat = client.chats.create(model="gemini-3-flash-preview",
 
 # Initialize Flask app
 app = Flask(__name__)
-line_channel_secret = os.getenv("LINE_CHANNEL_SECRET")
-line_channel_access_token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
-configuration = Configuration(access_token=line_channel_access_token)
+import os
+import sys
+from linebot.v3.webhook import WebhookHandler
+
+# 1. 嘗試讀取環境變數
+line_channel_secret = os.environ.get("LINE_CHANNEL_SECRET")
+line_channel_access_token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
+gemini_api_key = os.environ.get("GEMINI_API_KEY")
+
+# 2. 強制在日誌印出檢查結果（終極排查核心）
+print("====================================", flush=True)
+print("=== 🛠️ HUGGING FACE 環境變數檢查 ====", flush=True)
+print(f"1. LINE Secret 有讀到嗎？ -> {line_channel_secret is not None}", flush=True)
+print(f"2. LINE Token 有讀到嗎？  -> {line_channel_access_token is not None}", flush=True)
+print(f"3. Gemini Key 有讀到嗎？   -> {gemini_api_key is not None}", flush=True)
+print("====================================", flush=True)
+
+# 3. 安全防護：如果是空的就優雅攔截，不要讓後面崩潰
+if line_channel_secret is None:
+    print("❌【警報】LINE_CHANNEL_SECRET 讀取失敗，值為 None！", flush=True)
+    print("請檢查 Settings 裡的 Secret 名字是否完全一致（注意有沒有多餘的空格）。", flush=True)
+    sys.exit("排查中：因為變數為空，主動停止程式。")
+
+# 原本的第 40 行
 handler = WebhookHandler(line_channel_secret)
 
 
