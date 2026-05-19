@@ -84,7 +84,7 @@ def handle_text_message(event):
     html_msg = markdown.markdown(response_text)
     soup = BeautifulSoup(html_msg, "html.parser")
 
-    with ApiClient(configuration) as api_client:
+    with ApiClient(Configuration) as api_client:
         line_bot_api = MessagingApi(api_client)
         line_bot_api.reply_message_with_http_info(
             ReplyMessageRequest(
