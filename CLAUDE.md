@@ -41,7 +41,7 @@ docker run --rm -p 7860:7860 `
   sculinebot
 ```
 
-`Dockerfile` 預設執行的入口是 `replybot:app`，若要 demo 其他範例，修改 `Dockerfile` 最後一行的 `CMD` 即可。`Dockerfile.old` 保留了舊版以 `gpt4:app` 為入口的設定，可作對照。
+`Dockerfile` 目前的 `CMD` 是 `multiturn:app`（不是 `replybot:app`），若要 demo 其他範例，修改最後一行的 `CMD` 即可。基底是 `python:3.12.10-slim`，會建立 `appuser` 並 `chown`，也有對 `http://0.0.0.0:7860/` 的 `HEALTHCHECK`。`Dockerfile.old` 是舊版（`python:3.12.2`、`gpt4:app` 入口、無 healthcheck、無 non-root user），保留作對照。
 
 ## 架構與規範
 
@@ -49,13 +49,13 @@ docker run --rm -p 7860:7860 `
 
 所有檔案都是**同一個 Flask + LINE Webhook 樣板**的不同變體，POST `/` 接 LINE webhook、GET `/` 做 health check。差別在於 LLM 的呼叫方式：
 
-- `replybot.py` — **唯一的「正典」**。其他檔案的環境變數命名都應該以這支為準（見下方）。Gemini 單次呼叫、無 chat session。
-- `multiturn.py` — 改用 `client.chats.create(...)` 維持多輪對話。
-- `system_prompt.py` — 在單次呼叫中加 `system_instruction`。
-- `with_logs.py` — 加上 `logging.basicConfig` 的版本。
-- `with_search.py` — 把 `GoogleSearch` 當 tool 傳入 chat。
-- `gemini.py` / `example01.py` — 完整版：除文字外，多了 `ImageMessageContent`、`VideoMessageContent` handler、`MessagingApiBlob` 下載媒體、Gemini 圖片生成 (`AI ` 前綴觸發)，並透過 `SPACE_HOST` 組出靜態圖片回傳 URL。`example01.py` 使用 `gemini-2.5-pro-preview` 並要求文言文輸出。
-- `gpt4.py` — 把 LLM 換成 OpenAI `responses` API + DALL·E 3，並用 `previous_response_id` 串多輪。是「同樣的 LINE 樣板、不同 LLM」的對照組。
+- `replybot.py` — **唯一的「正典」**。其他檔案的環境變數命名都應該以這支為準（見下方）。Gemini 單次呼叫、無 chat session，使用 `gemini-3.1-flash-lite`。
+- `multiturn.py` — 改用 `client.chats.create(...)` 維持多輪對話（模組層級單一全域 `chat`，**所有 LINE 使用者共用同一個 session**，這是教學簡化、生產不可用）。模型 `gemini-3-flash-preview`。
+- `system_prompt.py` — 在單次呼叫中加 `system_instruction`。模型 `gemini-3-flash-preview`。
+- `with_logs.py` — 加上 `logging.basicConfig` 的版本。模型 `gemini-3-flash-preview`。
+- `with_search.py` — 把 `GoogleSearch` 當 tool 傳入 chat。模型 `gemini-3-flash-preview`。
+- `gemini.py` / `example01.py` — 完整版：除文字外，多了 `ImageMessageContent`、`VideoMessageContent` handler、`MessagingApiBlob` 下載媒體、Gemini 圖片生成 (`AI ` 前綴觸發，模型 `gemini-3.1-flash-image-preview`)，並透過 `SPACE_HOST` 組出靜態圖片回傳 URL。`gemini.py` 的對話模型是 `gemini-3-flash-preview`；`example01.py` 改用 `gemini-3.1-pro-preview` 並要求文言文輸出。
+- `gpt4.py` — 把 LLM 換成 OpenAI `responses` API（`gpt-4o-mini` 對話、`gpt-4.1-nano` 看圖、DALL·E 3 生圖），用 `previous_response_id` 串多輪。注意它用模組層級的 `global message_id` 維持狀態，**也是所有使用者共用**。是「同樣的 LINE 樣板、不同 LLM」的對照組。
 
 ### 環境變數命名規範（重要）
 
@@ -96,7 +96,7 @@ text = BeautifulSoup(html, "html.parser").get_text()
 
 ### Docker / 部署
 
-`Dockerfile` 的 `CMD` 寫死了入口模組（預設 `replybot:app`）。若要切換要 demo 的範例：
+`Dockerfile` 的 `CMD` 寫死了入口模組（目前是 `multiturn:app`）。若要切換要 demo 的範例：
 
 1. 改 `Dockerfile` 最後一行的模組名。
 2. Hugging Face Spaces 會自動 rebuild。
@@ -107,5 +107,5 @@ text = BeautifulSoup(html, "html.parser").get_text()
 
 - 修改任一範例時，**保持與 `replybot.py` 的變數命名一致**，這是這個 repo 的核心慣例。
 - 加新範例時，沿用 `<檔名>:app` 可被 gunicorn 直接 serve 的結構（檔案頂層要有 `app = Flask(__name__)`）。
-- `requirements.txt` 與 `test_requirements.txt` 內容幾乎相同，差別只在註解；新套件記得兩邊都加。
+- `requirements.txt` 與 `test_requirements.txt` 內容大致相同（前者有中文註解、且多了 `Pillow`），新套件記得兩邊都加。
 - 課程性質的 repo，**不要過度抽象**——把每個範例獨立、可單檔閱讀的特性保留下來，不要把共用程式抽成 module 而毀掉教學的可讀性。
