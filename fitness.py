@@ -143,6 +143,20 @@ def log_habit(user_id: str, type_: str, amount: Optional[float] = None,
     }).execute()
 
 
+def get_latest_habit(user_id: str, type_: str) -> Optional[dict]:
+    """拿最新一筆指定類型的習慣紀錄。"""
+    res = (
+        supabase.table("habit_logs")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("type", type_)
+        .order("recorded_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    return res.data[0] if res.data else None
+
+
 def get_today_habit_sum(user_id: str, type_: str) -> float:
     today_start = datetime.combine(date.today(), datetime.min.time()).isoformat()
     res = (
@@ -377,8 +391,30 @@ def claude_workout_snack(profile: dict, when: str) -> str:
 
 
 # ============================================================
-# 5. Flex Message 樣板
+# 5. Flex Message 樣板（香橘活力色系）
 # ============================================================
+
+# --- 香橘活力色票 ---
+C_PRIMARY = "#FF6B35"      # 主橘
+C_PRIMARY_DARK = "#E55B25" # 深橘（按下/陰影）
+C_ACCENT = "#A8D936"       # 奇異果綠（成就/正向）
+C_PEACH = "#FF9966"        # 桃橘（次要 CTA）
+C_BG_WARM = "#FFF8F0"      # 暖白底
+C_TEXT_DARK = "#2D2D2D"    # 深灰主文字
+C_TEXT_SOFT = "#888888"    # 次文字
+C_DIVIDER = "#F0E6DA"      # 分隔線
+C_TRACK = "#F5E6DA"        # 進度條底
+C_WARN = "#FF4D4F"         # 警示紅
+C_SLEEP = "#7B68EE"        # 睡眠紫（夜間元素）
+
+# --- 各功能主題色（一致性） ---
+COLOR_GOAL = C_PRIMARY        # 🎯 目標 — 橘
+COLOR_HABIT = C_ACCENT        # 🌱 自我成長 — 綠
+COLOR_DIET = C_PEACH          # 🥗 飲食 — 桃
+COLOR_MGMT = "#9E9E9E"        # ⚙️ 資料管理 — 中性灰
+COLOR_WATER = "#5DADE2"       # 💧 水 — 藍
+COLOR_SLEEP = C_SLEEP         # 🌙 睡眠 — 紫
+COLOR_STRETCH = C_PEACH       # 🪑 伸展 — 桃
 
 
 def _flex(alt: str, contents: dict) -> FlexMessage:
@@ -390,35 +426,39 @@ def main_menu_flex() -> FlexMessage:
     body = {
         "type": "carousel",
         "contents": [
-            _menu_card("🎯 目標設定與追蹤", "用 SMART 框架設定目標，定期回顧進度。",
-                       "#F25F5C", "目標設定", "目標設定"),
-            _menu_card("🌱 自我成長與習慣", "運動 / 飲水 / 睡眠 / 反思 一起紀錄。",
-                       "#247BA0", "自我成長", "自我成長"),
-            _menu_card("🥗 飲食與健康", "TDEE 規劃、彈性菜單、運動點心。",
-                       "#70C1B3", "飲食與健康", "飲食與健康"),
-            _menu_card("⚙️ 資料管理", "撤銷紀錄、放棄目標、重設 TDEE、刪除全部。",
-                       "#6C757D", "資料管理", "資料管理"),
+            _menu_card("🎯", "目標設定", "用 SMART 框架設目標", COLOR_GOAL, "開始設目標", "目標設定"),
+            _menu_card("🌱", "自我成長", "運動 / 飲水 / 睡眠 / 反思", COLOR_HABIT, "進入", "自我成長"),
+            _menu_card("🥗", "飲食與健康", "TDEE / 菜單 / 運動點心", COLOR_DIET, "進入", "飲食與健康"),
+            _menu_card("⚙️", "資料管理", "撤銷紀錄 / 重設 / 刪除", COLOR_MGMT, "進入", "資料管理"),
         ],
     }
     return _flex("主選單", body)
 
 
-def _menu_card(title: str, subtitle: str, color: str, btn_label: str, btn_text: str) -> dict:
+def _menu_card(emoji: str, title: str, subtitle: str, color: str, btn_label: str, btn_text: str) -> dict:
     return {
         "type": "bubble",
         "size": "kilo",
         "header": {
-            "type": "box", "layout": "vertical", "backgroundColor": color, "paddingAll": "16px",
-            "contents": [{"type": "text", "text": title, "weight": "bold", "size": "lg", "color": "#FFFFFF"}],
+            "type": "box", "layout": "vertical", "backgroundColor": color,
+            "paddingAll": "20px", "spacing": "sm",
+            "contents": [
+                {"type": "text", "text": emoji, "size": "4xl", "align": "center"},
+                {"type": "text", "text": title, "weight": "bold", "size": "xl",
+                 "color": "#FFFFFF", "align": "center", "margin": "sm"},
+            ],
         },
         "body": {
-            "type": "box", "layout": "vertical", "spacing": "sm",
-            "contents": [{"type": "text", "text": subtitle, "wrap": True, "size": "sm", "color": "#555555"}],
+            "type": "box", "layout": "vertical", "paddingAll": "16px",
+            "contents": [
+                {"type": "text", "text": subtitle, "wrap": True,
+                 "size": "sm", "color": C_TEXT_SOFT, "align": "center"},
+            ],
         },
         "footer": {
-            "type": "box", "layout": "vertical",
+            "type": "box", "layout": "vertical", "paddingAll": "12px",
             "contents": [{
-                "type": "button", "style": "primary", "color": color,
+                "type": "button", "style": "primary", "color": color, "height": "sm",
                 "action": {"type": "message", "label": btn_label, "text": btn_text},
             }],
         },
@@ -427,36 +467,46 @@ def _menu_card(title: str, subtitle: str, color: str, btn_label: str, btn_text: 
 
 def tdee_result_flex(profile: dict) -> FlexMessage:
     target_label = {"bulk": "增肌", "maintain": "維持", "cut": "減脂"}.get(profile["target_type"], "維持")
+    target_emoji = {"bulk": "🔥", "maintain": "⚖️", "cut": "✂️"}.get(profile["target_type"], "⚖️")
     body = {
         "type": "bubble",
         "header": {
-            "type": "box", "layout": "vertical", "backgroundColor": "#1B4965", "paddingAll": "16px",
+            "type": "box", "layout": "vertical", "backgroundColor": C_PRIMARY,
+            "paddingAll": "20px", "spacing": "xs",
             "contents": [
-                {"type": "text", "text": "你的能量基準線", "color": "#FFFFFF", "size": "sm"},
-                {"type": "text", "text": f"目標：{target_label}期", "color": "#FFFFFF", "weight": "bold", "size": "xl"},
+                {"type": "text", "text": "🎯 你的能量基準線",
+                 "color": "#FFFFFF", "size": "sm", "weight": "bold"},
+                {"type": "text", "text": f"{target_emoji} {target_label}期",
+                 "color": "#FFFFFF", "weight": "bold", "size": "xxl", "margin": "sm"},
+                {"type": "text",
+                 "text": f"每日目標 {int(profile['target_kcal'])} kcal",
+                 "color": "#FFFFFF", "size": "sm", "margin": "sm"},
             ],
         },
         "body": {
-            "type": "box", "layout": "vertical", "spacing": "md",
+            "type": "box", "layout": "vertical", "spacing": "md", "paddingAll": "16px",
             "contents": [
-                _kv("BMR", f"{int(profile['bmr'])} kcal"),
-                _kv("TDEE", f"{int(profile['tdee'])} kcal"),
-                _kv("目標熱量", f"{int(profile['target_kcal'])} kcal/日"),
-                {"type": "separator"},
-                _kv("蛋白質", f"{profile['protein_g']} g"),
-                _kv("碳水", f"{profile['carb_g']} g"),
-                _kv("脂肪", f"{profile['fat_g']} g"),
-                {"type": "separator"},
-                _kv("每日喝水", f"{profile['daily_water_ml']} ml"),
+                {"type": "text", "text": "📊 能量配置", "size": "sm",
+                 "color": C_TEXT_SOFT, "weight": "bold"},
+                _kv("基礎代謝 BMR", f"{int(profile['bmr'])} kcal"),
+                _kv("每日總消耗 TDEE", f"{int(profile['tdee'])} kcal"),
+                {"type": "separator", "margin": "md", "color": C_DIVIDER},
+                {"type": "text", "text": "🥗 三大營養素",
+                 "size": "sm", "color": C_TEXT_SOFT, "weight": "bold", "margin": "md"},
+                _kv("🥩 蛋白質", f"{profile['protein_g']} g"),
+                _kv("🍚 碳水", f"{profile['carb_g']} g"),
+                _kv("🥑 脂肪", f"{profile['fat_g']} g"),
+                {"type": "separator", "margin": "md", "color": C_DIVIDER},
+                _kv("💧 每日喝水", f"{profile['daily_water_ml']} ml"),
             ],
         },
         "footer": {
-            "type": "box", "layout": "vertical", "spacing": "sm",
+            "type": "box", "layout": "vertical", "spacing": "sm", "paddingAll": "12px",
             "contents": [
-                {"type": "button", "style": "primary", "color": "#1B4965",
-                 "action": {"type": "message", "label": "看主選單", "text": "選單"}},
-                {"type": "button", "style": "secondary",
-                 "action": {"type": "message", "label": "我要重新設定", "text": "個人資料"}},
+                {"type": "button", "style": "primary", "color": C_PRIMARY, "height": "sm",
+                 "action": {"type": "message", "label": "📋 看主選單", "text": "選單"}},
+                {"type": "button", "style": "link", "height": "sm",
+                 "action": {"type": "message", "label": "重新設定資料", "text": "個人資料"}},
             ],
         },
     }
@@ -467,39 +517,62 @@ def _kv(k: str, v: str) -> dict:
     return {
         "type": "box", "layout": "horizontal",
         "contents": [
-            {"type": "text", "text": k, "color": "#555555", "size": "sm", "flex": 4},
-            {"type": "text", "text": v, "wrap": True, "size": "sm", "flex": 5, "align": "end", "weight": "bold"},
+            {"type": "text", "text": k, "color": C_TEXT_SOFT, "size": "sm", "flex": 5},
+            {"type": "text", "text": v, "wrap": True, "size": "sm", "flex": 4,
+             "align": "end", "weight": "bold", "color": C_TEXT_DARK},
         ],
     }
 
 
 def goal_card_flex(goal: dict) -> FlexMessage:
-    deadline = goal.get("deadline") or "—"
+    deadline_str = goal.get("deadline") or ""
+    countdown = ""
+    if deadline_str:
+        try:
+            d = datetime.strptime(deadline_str, "%Y-%m-%d").date()
+            days = (d - date.today()).days
+            if days > 0:
+                countdown = f"⏳ 還剩 {days} 天"
+            elif days == 0:
+                countdown = "🔔 今天到期！"
+            else:
+                countdown = f"⚠️ 已過期 {-days} 天"
+        except (ValueError, TypeError):
+            countdown = ""
+
     body = {
         "type": "bubble",
         "header": {
-            "type": "box", "layout": "vertical", "backgroundColor": "#F25F5C", "paddingAll": "16px",
-            "contents": [{"type": "text", "text": "🎯 你的目標", "color": "#FFFFFF", "weight": "bold", "size": "lg"}],
+            "type": "box", "layout": "vertical", "backgroundColor": C_PRIMARY,
+            "paddingAll": "20px", "spacing": "xs",
+            "contents": [
+                {"type": "text", "text": "🎯 你的目標",
+                 "color": "#FFFFFF", "weight": "bold", "size": "lg"},
+                {"type": "text", "text": countdown or "📅 期限未設",
+                 "color": "#FFFFFF", "size": "sm", "margin": "sm"},
+            ],
         },
         "body": {
-            "type": "box", "layout": "vertical", "spacing": "sm",
+            "type": "box", "layout": "vertical", "spacing": "md", "paddingAll": "16px",
             "contents": [
-                {"type": "text", "text": goal.get("description") or "（未填）", "wrap": True, "weight": "bold"},
-                {"type": "separator", "margin": "md"},
-                _kv("可量化指標", goal.get("smart_measurable") or "—"),
-                _kv("期限", str(deadline)),
-                _kv("本週第一步", goal.get("first_step") or "—"),
-                _kv("里程碑", goal.get("milestones") or "—"),
-                _kv("回顧頻率", "每日" if goal.get("review_freq") == "daily" else "每週"),
+                {"type": "text", "text": goal.get("description") or "（未填）",
+                 "wrap": True, "weight": "bold", "size": "md", "color": C_TEXT_DARK},
+                {"type": "separator", "margin": "md", "color": C_DIVIDER},
+                _kv("📏 可量化指標", goal.get("smart_measurable") or "—"),
+                _kv("📅 期限", deadline_str or "—"),
+                _kv("👣 本週第一步", goal.get("first_step") or "—"),
+                _kv("🏁 里程碑", goal.get("milestones") or "—"),
+                _kv("🔁 回顧頻率", "每日 ✨" if goal.get("review_freq") == "daily" else "每週 📆"),
             ],
         },
         "footer": {
-            "type": "box", "layout": "vertical", "spacing": "sm",
+            "type": "box", "layout": "vertical", "spacing": "sm", "paddingAll": "12px",
             "contents": [
-                {"type": "button", "style": "primary", "color": "#F25F5C",
-                 "action": {"type": "postback", "label": "完成這個目標", "data": "action=goal_done",
-                            "displayText": "我完成這個目標了"}},
-                {"type": "button", "style": "secondary",
+                {"type": "button", "style": "primary", "color": C_ACCENT, "height": "sm",
+                 "action": {"type": "postback", "label": "🎉 完成目標",
+                            "data": "action=goal_done",
+                            "displayText": "我完成這個目標了！"}},
+                {"type": "button", "style": "link", "height": "sm",
                  "action": {"type": "message", "label": "設新目標", "text": "新目標"}},
             ],
         },
@@ -507,42 +580,68 @@ def goal_card_flex(goal: dict) -> FlexMessage:
     return _flex("我的目標", body)
 
 
+def _progress_bar(pct: int, color: str) -> dict:
+    """水平進度條，pct 0-100。"""
+    pct = max(0, min(100, pct))
+    return {
+        "type": "box", "layout": "horizontal", "height": "10px",
+        "backgroundColor": C_TRACK, "cornerRadius": "5px",
+        "contents": [
+            {"type": "box", "layout": "vertical", "width": f"{max(1, pct)}%",
+             "backgroundColor": color, "cornerRadius": "5px",
+             "contents": [{"type": "filler"}]},
+        ],
+    }
+
+
 def water_card_flex(current_ml: int, target_ml: int) -> FlexMessage:
     pct = min(100, int(current_ml * 100 / max(1, target_ml)))
+    encouragement = (
+        "🎉 達標了！繼續保持！" if pct >= 100
+        else "💪 快達標了！再加一杯！" if pct >= 75
+        else "👍 進度不錯，繼續喝！" if pct >= 50
+        else "💧 慢慢累積，每口都算！"
+    )
     body = {
         "type": "bubble",
         "header": {
-            "type": "box", "layout": "vertical", "backgroundColor": "#247BA0", "paddingAll": "16px",
+            "type": "box", "layout": "vertical", "backgroundColor": COLOR_WATER,
+            "paddingAll": "20px", "spacing": "xs",
             "contents": [
-                {"type": "text", "text": "💧 今日飲水進度", "color": "#FFFFFF", "weight": "bold"},
-                {"type": "text", "text": f"{current_ml} / {target_ml} ml ({pct}%)",
-                 "color": "#FFFFFF", "size": "sm", "margin": "sm"},
+                {"type": "text", "text": "💧 今日飲水",
+                 "color": "#FFFFFF", "weight": "bold", "size": "lg"},
+                {"type": "text", "text": f"{current_ml} / {target_ml} ml",
+                 "color": "#FFFFFF", "size": "xxl", "weight": "bold", "margin": "sm"},
+                {"type": "text", "text": f"{pct}% 完成",
+                 "color": "#FFFFFF", "size": "sm", "margin": "xs"},
             ],
         },
         "body": {
-            "type": "box", "layout": "vertical", "spacing": "md",
+            "type": "box", "layout": "vertical", "spacing": "md", "paddingAll": "16px",
             "contents": [
-                {"type": "box", "layout": "vertical",
-                 "backgroundColor": "#E0E0E0", "height": "12px", "cornerRadius": "6px",
-                 "contents": [{"type": "box", "layout": "vertical",
-                               "backgroundColor": "#247BA0",
-                               "width": f"{pct}%", "height": "12px", "cornerRadius": "6px",
-                               "contents": [{"type": "filler"}]}]},
-                {"type": "text", "text": "選一杯水量打卡：", "size": "sm", "color": "#555555", "margin": "md"},
+                _progress_bar(pct, COLOR_WATER),
+                {"type": "text", "text": encouragement, "size": "sm",
+                 "color": C_TEXT_DARK, "align": "center", "margin": "md"},
+                {"type": "separator", "color": C_DIVIDER, "margin": "md"},
+                {"type": "text", "text": "選一杯打卡 👇", "size": "sm",
+                 "color": C_TEXT_SOFT, "margin": "sm"},
             ],
         },
         "footer": {
-            "type": "box", "layout": "vertical", "spacing": "sm",
+            "type": "box", "layout": "horizontal", "spacing": "sm", "paddingAll": "12px",
             "contents": [
-                {"type": "button", "style": "primary", "color": "#247BA0",
-                 "action": {"type": "postback", "label": "🥤 200 ml",
-                            "data": "action=log_water&amount=200", "displayText": "我喝了 200 ml"}},
-                {"type": "button", "style": "primary", "color": "#247BA0",
-                 "action": {"type": "postback", "label": "🍶 350 ml",
-                            "data": "action=log_water&amount=350", "displayText": "我喝了 350 ml"}},
-                {"type": "button", "style": "primary", "color": "#247BA0",
-                 "action": {"type": "postback", "label": "🧴 500 ml",
-                            "data": "action=log_water&amount=500", "displayText": "我喝了 500 ml"}},
+                {"type": "button", "style": "primary", "color": COLOR_WATER, "height": "sm",
+                 "action": {"type": "postback", "label": "🥤 200",
+                            "data": "action=log_water&amount=200",
+                            "displayText": "我喝了 200ml 💧"}},
+                {"type": "button", "style": "primary", "color": COLOR_WATER, "height": "sm",
+                 "action": {"type": "postback", "label": "🍶 350",
+                            "data": "action=log_water&amount=350",
+                            "displayText": "我喝了 350ml 💧"}},
+                {"type": "button", "style": "primary", "color": COLOR_WATER, "height": "sm",
+                 "action": {"type": "postback", "label": "🧴 500",
+                            "data": "action=log_water&amount=500",
+                            "displayText": "我喝了 500ml 💧"}},
             ],
         },
     }
@@ -553,30 +652,38 @@ def sleep_card_flex() -> FlexMessage:
     body = {
         "type": "bubble",
         "header": {
-            "type": "box", "layout": "vertical", "backgroundColor": "#5B6CFF", "paddingAll": "16px",
-            "contents": [{"type": "text", "text": "🌙 昨晚睡得好嗎？", "color": "#FFFFFF", "weight": "bold"}],
+            "type": "box", "layout": "vertical", "backgroundColor": COLOR_SLEEP,
+            "paddingAll": "20px", "spacing": "xs",
+            "contents": [
+                {"type": "text", "text": "🌙 昨晚睡得好嗎？",
+                 "color": "#FFFFFF", "weight": "bold", "size": "lg"},
+                {"type": "text", "text": "睡眠是最強的修復神器",
+                 "color": "#FFFFFF", "size": "sm", "margin": "sm"},
+            ],
         },
         "body": {
-            "type": "box", "layout": "vertical", "spacing": "sm",
+            "type": "box", "layout": "vertical", "spacing": "sm", "paddingAll": "16px",
             "contents": [
                 {"type": "text",
-                 "text": "肌肉是在睡眠中修復長大的，先回想一下昨晚的狀態。",
-                 "wrap": True, "size": "sm", "color": "#555555"},
-                {"type": "text", "text": "請選擇昨晚的睡眠品質：", "size": "sm", "margin": "md"},
+                 "text": "肌肉在睡眠中修復、生長激素也在這時分泌。先選一下昨晚感受 👇",
+                 "wrap": True, "size": "sm", "color": C_TEXT_SOFT},
             ],
         },
         "footer": {
-            "type": "box", "layout": "vertical", "spacing": "sm",
+            "type": "box", "layout": "vertical", "spacing": "sm", "paddingAll": "12px",
             "contents": [
-                {"type": "button", "style": "primary", "color": "#5B6CFF",
-                 "action": {"type": "postback", "label": "😴 很好",
-                            "data": "action=log_sleep&quality=good", "displayText": "昨晚睡得很好"}},
-                {"type": "button", "style": "secondary",
-                 "action": {"type": "postback", "label": "😐 普通",
-                            "data": "action=log_sleep&quality=normal", "displayText": "昨晚普通"}},
-                {"type": "button", "style": "secondary",
+                {"type": "button", "style": "primary", "color": C_ACCENT, "height": "sm",
+                 "action": {"type": "postback", "label": "😴 睡得很好",
+                            "data": "action=log_sleep&quality=good",
+                            "displayText": "昨晚睡得很好 😴"}},
+                {"type": "button", "style": "primary", "color": COLOR_SLEEP, "height": "sm",
+                 "action": {"type": "postback", "label": "😐 還可以",
+                            "data": "action=log_sleep&quality=normal",
+                            "displayText": "昨晚還可以 😐"}},
+                {"type": "button", "style": "primary", "color": C_WARN, "height": "sm",
                  "action": {"type": "postback", "label": "😣 不太好",
-                            "data": "action=log_sleep&quality=bad", "displayText": "昨晚睡得不好"}},
+                            "data": "action=log_sleep&quality=bad",
+                            "displayText": "昨晚沒睡好 😣"}},
             ],
         },
     }
@@ -587,23 +694,38 @@ def stretch_card_flex() -> FlexMessage:
     body = {
         "type": "bubble",
         "header": {
-            "type": "box", "layout": "vertical", "backgroundColor": "#F4A261", "paddingAll": "16px",
-            "contents": [{"type": "text", "text": "🪑 久坐破冰時間！", "color": "#FFFFFF", "weight": "bold"}],
+            "type": "box", "layout": "vertical", "backgroundColor": COLOR_STRETCH,
+            "paddingAll": "20px", "spacing": "xs",
+            "contents": [
+                {"type": "text", "text": "🪑 久坐破冰時間",
+                 "color": "#FFFFFF", "weight": "bold", "size": "lg"},
+                {"type": "text", "text": "1 分鐘站起來動一下",
+                 "color": "#FFFFFF", "size": "sm", "margin": "sm"},
+            ],
         },
         "body": {
-            "type": "box", "layout": "vertical", "spacing": "sm",
+            "type": "box", "layout": "vertical", "spacing": "sm", "paddingAll": "16px",
             "contents": [
-                {"type": "text", "text": "1 分鐘辦公室伸展：", "weight": "bold"},
-                {"type": "text",
-                 "text": "1) 起身原地踏步 20 下\n2) 雙手扶椅背，胸口前推 10 秒 x 3\n3) 髖屈肌弓箭步伸展 左右各 20 秒",
-                 "wrap": True, "size": "sm", "color": "#555555"},
+                {"type": "text", "text": "今日動作菜單", "weight": "bold",
+                 "color": C_TEXT_DARK, "size": "sm"},
+                {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "md",
+                 "contents": [
+                     {"type": "text", "text": "1️⃣ 原地踏步 20 下",
+                      "wrap": True, "size": "sm", "color": C_TEXT_DARK},
+                     {"type": "text", "text": "2️⃣ 扶椅背胸口前推 10 秒 × 3",
+                      "wrap": True, "size": "sm", "color": C_TEXT_DARK},
+                     {"type": "text", "text": "3️⃣ 弓箭步髖伸展 左右各 20 秒",
+                      "wrap": True, "size": "sm", "color": C_TEXT_DARK},
+                 ]},
             ],
         },
         "footer": {
-            "type": "box", "layout": "vertical",
-            "contents": [{"type": "button", "style": "primary", "color": "#F4A261",
-                          "action": {"type": "postback", "label": "✅ 我動起來了！",
-                                     "data": "action=log_stretch", "displayText": "我做完伸展了"}}],
+            "type": "box", "layout": "vertical", "paddingAll": "12px",
+            "contents": [{"type": "button", "style": "primary",
+                          "color": COLOR_STRETCH, "height": "sm",
+                          "action": {"type": "postback", "label": "✅ 動完了！",
+                                     "data": "action=log_stretch",
+                                     "displayText": "我動起來了！💪"}}],
         },
     }
     return _flex("久坐伸展", body)
@@ -613,28 +735,33 @@ def macro_visual_flex(profile: dict) -> FlexMessage:
     p_g, c_g, f_g = profile["protein_g"], profile["carb_g"], profile["fat_g"]
     p_kcal, c_kcal, f_kcal = p_g * 4, c_g * 4, f_g * 9
     total = max(1, p_kcal + c_kcal + f_kcal)
-    p_pct, c_pct, f_pct = int(p_kcal * 100 / total), int(c_kcal * 100 / total), int(f_kcal * 100 / total)
+    p_pct = int(p_kcal * 100 / total)
+    c_pct = int(c_kcal * 100 / total)
+    f_pct = int(f_kcal * 100 / total)
+    target_emoji = {"bulk": "🔥", "maintain": "⚖️", "cut": "✂️"}.get(profile["target_type"], "⚖️")
     target_label = {"bulk": "增肌期", "maintain": "維持期", "cut": "減脂期"}.get(profile["target_type"], "")
 
     body = {
         "type": "bubble",
         "header": {
-            "type": "box", "layout": "vertical", "backgroundColor": "#264653", "paddingAll": "16px",
+            "type": "box", "layout": "vertical", "backgroundColor": COLOR_DIET,
+            "paddingAll": "20px", "spacing": "xs",
             "contents": [
-                {"type": "text", "text": "🥗 今日三大營養素", "color": "#FFFFFF", "weight": "bold"},
-                {"type": "text", "text": target_label, "color": "#FFFFFF", "size": "sm", "margin": "sm"},
+                {"type": "text", "text": "🥗 今日三大營養素",
+                 "color": "#FFFFFF", "weight": "bold", "size": "lg"},
+                {"type": "text", "text": f"{target_emoji} {target_label}",
+                 "color": "#FFFFFF", "size": "sm", "margin": "sm"},
             ],
         },
         "body": {
-            "type": "box", "layout": "vertical", "spacing": "md",
+            "type": "box", "layout": "vertical", "spacing": "lg", "paddingAll": "16px",
             "contents": [
-                _macro_bar("🥩 蛋白質", p_g, p_pct, "#E76F51"),
-                _macro_bar("🍚 碳水", c_g, c_pct, "#E9C46A"),
-                _macro_bar("🥑 脂肪", f_g, f_pct, "#2A9D8F"),
-                {"type": "separator", "margin": "md"},
-                {"type": "text",
-                 "text": _macro_coach_note(profile["target_type"]),
-                 "wrap": True, "size": "sm", "color": "#555555"},
+                _macro_bar("🥩 蛋白質", p_g, p_pct, "#E55B25"),
+                _macro_bar("🍚 碳水", c_g, c_pct, "#F4A261"),
+                _macro_bar("🥑 脂肪", f_g, f_pct, C_ACCENT),
+                {"type": "separator", "margin": "md", "color": C_DIVIDER},
+                {"type": "text", "text": _macro_coach_note(profile["target_type"]),
+                 "wrap": True, "size": "sm", "color": C_TEXT_DARK, "margin": "md"},
             ],
         },
     }
@@ -647,15 +774,12 @@ def _macro_bar(label: str, grams: int, pct: int, color: str) -> dict:
         "contents": [
             {"type": "box", "layout": "horizontal",
              "contents": [
-                 {"type": "text", "text": label, "size": "sm", "flex": 3},
-                 {"type": "text", "text": f"{grams} g ({pct}%)", "size": "sm", "align": "end", "flex": 4, "weight": "bold"},
+                 {"type": "text", "text": label, "size": "sm",
+                  "flex": 3, "color": C_TEXT_DARK, "weight": "bold"},
+                 {"type": "text", "text": f"{grams} g · {pct}%", "size": "sm",
+                  "align": "end", "flex": 4, "weight": "bold", "color": C_TEXT_DARK},
              ]},
-            {"type": "box", "layout": "vertical",
-             "backgroundColor": "#EEEEEE", "height": "8px", "cornerRadius": "4px",
-             "contents": [{"type": "box", "layout": "vertical",
-                           "backgroundColor": color, "width": f"{max(1, pct)}%",
-                           "height": "8px", "cornerRadius": "4px",
-                           "contents": [{"type": "filler"}]}]},
+            _progress_bar(pct, color),
         ],
     }
 
@@ -666,6 +790,152 @@ def _macro_coach_note(target_type: str) -> str:
         "maintain": "教練碎碎念：維持期三大營養均衡，重點在穩定攝取、不要暴衝暴掉。",
         "cut": "教練碎碎念：今天幫你拉高蛋白質，是為了讓你減脂期充滿飽足感，且不掉肌肉喔！",
     }.get(target_type, "教練碎碎念：吃好吃滿，但吃對東西，是體態改變的基石。")
+
+
+def welcome_flex() -> FlexMessage:
+    body = {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box", "layout": "vertical", "backgroundColor": C_PRIMARY,
+            "paddingAll": "24px", "spacing": "sm",
+            "contents": [
+                {"type": "text", "text": "💪", "size": "5xl", "align": "center"},
+                {"type": "text", "text": "嗨，我是你的健身教練",
+                 "color": "#FFFFFF", "weight": "bold", "size": "xl",
+                 "align": "center", "margin": "sm"},
+                {"type": "text", "text": "目標 × 習慣 × 飲食 · 一次搞定",
+                 "color": "#FFFFFF", "size": "sm", "align": "center", "margin": "sm"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "md", "paddingAll": "20px",
+            "contents": [
+                _welcome_row("🎯", "目標設定", "SMART 框架幫你拆解大目標"),
+                _welcome_row("🌱", "自我成長", "運動 / 飲水 / 睡眠 / 反思紀錄"),
+                _welcome_row("🥗", "飲食健康", "TDEE 計算 + 客製菜單"),
+                {"type": "separator", "color": C_DIVIDER, "margin": "md"},
+                {"type": "text",
+                 "text": "👉 先建立個人資料、計算你的 TDEE 開始",
+                 "wrap": True, "size": "sm", "color": C_TEXT_DARK,
+                 "align": "center", "margin": "md"},
+            ],
+        },
+        "footer": {
+            "type": "box", "layout": "vertical", "spacing": "sm", "paddingAll": "12px",
+            "contents": [
+                {"type": "button", "style": "primary", "color": C_PRIMARY, "height": "sm",
+                 "action": {"type": "message", "label": "⚙️ 建立個人資料",
+                            "text": "個人資料"}},
+                {"type": "button", "style": "link", "height": "sm",
+                 "action": {"type": "message", "label": "看主選單", "text": "選單"}},
+            ],
+        },
+    }
+    return _flex("歡迎使用健身教練", body)
+
+
+def _welcome_row(emoji: str, title: str, subtitle: str) -> dict:
+    return {
+        "type": "box", "layout": "horizontal", "spacing": "md",
+        "contents": [
+            {"type": "text", "text": emoji, "size": "xl", "flex": 0, "gravity": "center"},
+            {"type": "box", "layout": "vertical", "flex": 5,
+             "contents": [
+                 {"type": "text", "text": title, "weight": "bold",
+                  "size": "sm", "color": C_TEXT_DARK},
+                 {"type": "text", "text": subtitle, "size": "xs",
+                  "color": C_TEXT_SOFT, "wrap": True},
+             ]},
+        ],
+    }
+
+
+def today_progress_flex(profile: dict, water_ml: int, water_target: int,
+                        sleep_recent: Optional[dict], workout_min: float,
+                        active_goal: Optional[dict]) -> FlexMessage:
+    today_str = date.today().strftime("%m/%d (%a)")
+    water_pct = min(100, int(water_ml * 100 / max(1, water_target)))
+
+    sleep_text = "—"
+    if sleep_recent:
+        q = sleep_recent.get("quality", "")
+        sleep_text = {"good": "😴 睡得好", "normal": "😐 還可以",
+                      "bad": "😣 沒睡好"}.get(q, "已紀錄")
+
+    workout_text = f"{int(workout_min)} 分鐘 💪" if workout_min > 0 else "尚未紀錄"
+
+    goal_text = "尚未設定"
+    if active_goal:
+        desc = (active_goal.get("description") or "")[:18]
+        goal_text = desc + ("…" if len(active_goal.get("description") or "") > 18 else "")
+
+    body = {
+        "type": "bubble",
+        "header": {
+            "type": "box", "layout": "vertical", "backgroundColor": C_PRIMARY,
+            "paddingAll": "20px",
+            "contents": [
+                {"type": "text", "text": "📊 今日進度",
+                 "color": "#FFFFFF", "weight": "bold", "size": "lg"},
+                {"type": "text", "text": today_str,
+                 "color": "#FFFFFF", "size": "sm", "margin": "sm"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "lg", "paddingAll": "16px",
+            "contents": [
+                # 飲水
+                {"type": "box", "layout": "vertical", "spacing": "xs",
+                 "contents": [
+                     {"type": "box", "layout": "horizontal",
+                      "contents": [
+                          {"type": "text", "text": "💧 飲水", "size": "sm",
+                           "color": C_TEXT_DARK, "weight": "bold", "flex": 2},
+                          {"type": "text", "text": f"{water_ml}/{water_target} ml",
+                           "size": "sm", "color": C_TEXT_DARK, "weight": "bold",
+                           "flex": 3, "align": "end"},
+                      ]},
+                     _progress_bar(water_pct, COLOR_WATER),
+                 ]},
+                # 睡眠
+                {"type": "box", "layout": "horizontal",
+                 "contents": [
+                     {"type": "text", "text": "🌙 昨晚睡眠", "size": "sm",
+                      "color": C_TEXT_DARK, "weight": "bold", "flex": 3},
+                     {"type": "text", "text": sleep_text, "size": "sm",
+                      "color": C_TEXT_DARK, "flex": 3, "align": "end"},
+                 ]},
+                # 運動
+                {"type": "box", "layout": "horizontal",
+                 "contents": [
+                     {"type": "text", "text": "💪 今日運動", "size": "sm",
+                      "color": C_TEXT_DARK, "weight": "bold", "flex": 3},
+                     {"type": "text", "text": workout_text, "size": "sm",
+                      "color": C_TEXT_DARK, "flex": 3, "align": "end"},
+                 ]},
+                {"type": "separator", "color": C_DIVIDER},
+                # 目標
+                {"type": "box", "layout": "vertical", "spacing": "xs",
+                 "contents": [
+                     {"type": "text", "text": "🎯 進行中目標", "size": "xs",
+                      "color": C_TEXT_SOFT},
+                     {"type": "text", "text": goal_text, "size": "sm",
+                      "color": C_TEXT_DARK, "weight": "bold", "wrap": True},
+                 ]},
+            ],
+        },
+        "footer": {
+            "type": "box", "layout": "vertical", "spacing": "sm", "paddingAll": "12px",
+            "contents": [
+                {"type": "button", "style": "primary", "color": COLOR_WATER, "height": "sm",
+                 "action": {"type": "message", "label": "💧 喝水打卡", "text": "飲水"}},
+                {"type": "button", "style": "link", "height": "sm",
+                 "action": {"type": "message", "label": "📋 主選單", "text": "選單"}},
+            ],
+        },
+    }
+    return _flex("今日進度", body)
 
 
 # ============================================================
@@ -742,8 +1012,8 @@ def start_profile_setup(user_id: str, reply_token: str) -> None:
     set_state(user_id, "profile_setup", "gender", {})
     reply_text(
         reply_token,
-        "我們先做一份基本檔案，算出你的每日能量基準線（TDEE）。\n第一題：你的生理性別？",
-        qr(("男", "男"), ("女", "女")),
+        "✨ 來建檔吧！我會幫你算出每日能量基準線（TDEE）。\n\n第 1 題：你的生理性別？",
+        qr(("👨 男", "男"), ("👩 女", "女")),
     )
 
 
@@ -752,54 +1022,54 @@ def handle_profile_setup(user_id: str, text: str, reply_token: str, state: dict)
     data = state["data"] or {}
 
     if step == "gender":
-        if text in ("男", "male"):
+        if text in ("男", "👨 男", "male"):
             data["gender"] = "male"
-        elif text in ("女", "female"):
+        elif text in ("女", "👩 女", "female"):
             data["gender"] = "female"
         else:
-            reply_text(reply_token, "請點下方按鈕選「男」或「女」。",
-                       qr(("男", "男"), ("女", "女")))
+            reply_text(reply_token, "請點按鈕選 👨 或 👩",
+                       qr(("👨 男", "男"), ("👩 女", "女")))
             return
         set_state(user_id, "profile_setup", "age", data)
-        reply_text(reply_token, "年齡是幾歲？（直接輸入數字）")
+        reply_text(reply_token, "第 2 題：年齡幾歲？（直接打數字）")
         return
 
     if step == "age":
         try:
             data["age"] = int(text)
         except ValueError:
-            reply_text(reply_token, "請輸入數字年齡，例如 25。")
+            reply_text(reply_token, "年齡要打數字喔，例如 25")
             return
         set_state(user_id, "profile_setup", "height", data)
-        reply_text(reply_token, "身高幾公分？（例如 170）")
+        reply_text(reply_token, "第 3 題：身高幾公分？（例如 170）")
         return
 
     if step == "height":
         try:
             data["height_cm"] = float(text)
         except ValueError:
-            reply_text(reply_token, "請輸入身高公分數，例如 170。")
+            reply_text(reply_token, "身高要打數字，例如 170")
             return
         set_state(user_id, "profile_setup", "weight", data)
-        reply_text(reply_token, "體重幾公斤？（例如 65）")
+        reply_text(reply_token, "第 4 題：體重幾公斤？（例如 65）")
         return
 
     if step == "weight":
         try:
             data["weight_kg"] = float(text)
         except ValueError:
-            reply_text(reply_token, "請輸入體重公斤數，例如 65。")
+            reply_text(reply_token, "體重要打數字，例如 65")
             return
         set_state(user_id, "profile_setup", "activity", data)
         reply_text(
             reply_token,
-            "每週運動頻率？",
+            "第 5 題：每週運動頻率？",
             qr(
-                ("久坐", "久坐"),
-                ("輕度 1-3", "輕度"),
-                ("中度 3-5", "中度"),
-                ("高度 6-7", "高度"),
-                ("極高 每天2次", "極高"),
+                ("🛋️ 久坐", "久坐"),
+                ("🚶 輕度 1-3", "輕度"),
+                ("🏃 中度 3-5", "中度"),
+                ("💪 高度 6-7", "高度"),
+                ("🔥 極高", "極高"),
             ),
         )
         return
@@ -810,26 +1080,26 @@ def handle_profile_setup(user_id: str, text: str, reply_token: str, state: dict)
             "高度": "active", "極高": "very_active",
         }
         if text not in mapping:
-            reply_text(reply_token, "請從按鈕選一個運動頻率。")
+            reply_text(reply_token, "請從按鈕選一個運動頻率")
             return
         data["activity_level"] = mapping[text]
         set_state(user_id, "profile_setup", "target", data)
         reply_text(
             reply_token,
-            "目標方向？",
-            qr(("增肌", "增肌"), ("維持", "維持"), ("減脂", "減脂")),
+            "第 6 題：目標方向？",
+            qr(("🔥 增肌", "增肌"), ("⚖️ 維持", "維持"), ("✂️ 減脂", "減脂")),
         )
         return
 
     if step == "target":
         mapping = {"增肌": "bulk", "維持": "maintain", "減脂": "cut"}
         if text not in mapping:
-            reply_text(reply_token, "請選增肌 / 維持 / 減脂。")
+            reply_text(reply_token, "請選增肌 / 維持 / 減脂")
             return
         data["target_type"] = mapping[text]
         set_state(user_id, "profile_setup", "eating_style", data)
-        reply_text(reply_token, "主要用餐型態？",
-                   qr(("外食族", "外食"), ("自己煮", "自煮")))
+        reply_text(reply_token, "第 7 題：主要用餐型態？",
+                   qr(("🍱 外食族", "外食"), ("🥘 自己煮", "自煮")))
         return
 
     if step == "eating_style":
@@ -838,12 +1108,12 @@ def handle_profile_setup(user_id: str, text: str, reply_token: str, state: dict)
         elif text in ("自煮", "自己煮"):
             data["eating_style"] = "home"
         else:
-            reply_text(reply_token, "請選外食 / 自煮。",
-                       qr(("外食族", "外食"), ("自己煮", "自煮")))
+            reply_text(reply_token, "請選外食 / 自煮",
+                       qr(("🍱 外食族", "外食"), ("🥘 自己煮", "自煮")))
             return
         set_state(user_id, "profile_setup", "vegetarian", data)
-        reply_text(reply_token, "你是素食者嗎？",
-                   qr(("是", "素食"), ("否", "葷食")))
+        reply_text(reply_token, "第 8 題：你是素食者嗎？",
+                   qr(("🥬 是", "素食"), ("🍖 否", "葷食")))
         return
 
     if step == "vegetarian":
@@ -851,15 +1121,15 @@ def handle_profile_setup(user_id: str, text: str, reply_token: str, state: dict)
         set_state(user_id, "profile_setup", "workout_time", data)
         reply_text(
             reply_token,
-            "通常什麼時段運動？",
-            qr(("晨練", "晨練"), ("下午練", "下午練"), ("夜練", "夜練")),
+            "最後一題：通常什麼時段運動？",
+            qr(("🌅 晨練", "晨練"), ("☀️ 下午練", "下午練"), ("🌙 夜練", "夜練")),
         )
         return
 
     if step == "workout_time":
         mapping = {"晨練": "morning", "下午練": "afternoon", "夜練": "evening"}
         if text not in mapping:
-            reply_text(reply_token, "請選晨練 / 下午練 / 夜練。")
+            reply_text(reply_token, "請選晨練 / 下午練 / 夜練")
             return
         data["workout_time"] = mapping[text]
         finalize_profile(user_id, data, reply_token)
@@ -888,7 +1158,7 @@ def finalize_profile(user_id: str, data: dict, reply_token: str) -> None:
 
     profile = get_profile(user_id)
     reply(reply_token, [
-        TextMessage(text="檔案建立完成 ✨ 這是你的能量基準線："),
+        TextMessage(text="✨ 檔案建好了！這是你的能量基準線 👇"),
         tdee_result_flex(profile),
     ])
 
@@ -1018,14 +1288,15 @@ def handle_goal_setting(user_id: str, text: str, reply_token: str, state: dict) 
 def self_growth_menu(reply_token: str) -> None:
     reply_text(
         reply_token,
-        "🌱 自我成長與習慣，今天想做什麼？",
+        "🌱 今天想紀錄什麼？",
         qr(
             ("💪 運動打卡", "運動打卡"),
-            ("💧 飲水", "飲水"),
-            ("🌙 睡眠紀錄", "睡眠紀錄"),
-            ("📝 反思", "反思"),
-            ("🚫 壞習慣紀錄", "壞習慣"),
-            ("📚 學習一則", "健身知識"),
+            ("💧 喝水", "飲水"),
+            ("🌙 睡眠", "睡眠紀錄"),
+            ("📝 寫反思", "反思"),
+            ("🚫 壞習慣", "壞習慣"),
+            ("📚 知識補給", "健身知識"),
+            ("📊 今日進度", "今日"),
         ),
     )
 
@@ -1046,34 +1317,34 @@ def show_sleep_card(reply_token: str) -> None:
 
 def start_workout_log(user_id: str, reply_token: str) -> None:
     set_state(user_id, "workout_log", "minutes", {})
-    reply_text(reply_token, "今天運動了幾分鐘？（直接輸入數字）")
+    reply_text(reply_token, "💪 今天動了幾分鐘？（直接打數字）")
 
 
 def handle_workout_log(user_id: str, text: str, reply_token: str, state: dict) -> None:
     try:
         minutes = float(text)
     except ValueError:
-        reply_text(reply_token, "請輸入數字（分鐘）。")
+        reply_text(reply_token, "請打數字喔，例如 45")
         return
     log_habit(user_id, "workout", amount=minutes)
     clear_state(user_id)
     reply_text(reply_token,
-               f"📒 已紀錄今天運動 {int(minutes)} 分鐘。動了就是贏了！\n回主選單請輸入「選單」。")
+               f"📒 紀錄完成：今天 {int(minutes)} 分鐘 ✅\n動了就是贏了 💪")
 
 
 def bad_habit_menu(reply_token: str) -> None:
     reply_text(
         reply_token,
-        "🚫 想紀錄哪一個？",
-        qr(("熬夜", "熬夜紀錄"), ("暴食", "暴食紀錄"), ("缺乏運動", "缺乏運動紀錄")),
+        "🚫 紀錄一下發生了什麼？\n紀錄不是責備，是讓你下次更清楚 ✨",
+        qr(("😴 熬夜", "熬夜紀錄"), ("🍔 暴食", "暴食紀錄"), ("🛋️ 沒動", "缺乏運動紀錄")),
     )
 
 
 def quick_log_bad_habit(user_id: str, text: str, reply_token: str) -> None:
     mapping = {
-        "熬夜紀錄": ("late_night", "今天熬夜了 ⏰ 記住：睡眠也是訓練的一部分。明天早點休息吧。"),
-        "暴食紀錄": ("binge", "暴食已紀錄。下次嘴饞前，先喝一杯水、走 5 分鐘看看。"),
-        "缺乏運動紀錄": ("no_exercise", "今天沒動到也沒關係，明天起來做 10 下深蹲就算開始。"),
+        "熬夜紀錄": ("late_night", "已紀錄熬夜 ⏰\n睡眠 = 修復時間 = 變強的開關。\n今晚提早 30 分鐘關燈試試 🌙"),
+        "暴食紀錄": ("binge", "已紀錄 🍱\n下次嘴饞前，先喝一杯水 + 走 5 分鐘。\n通常 80% 的渴望會自己消失 ✨"),
+        "缺乏運動紀錄": ("no_exercise", "已紀錄 🛋️\n沒事，明天起來做 10 下深蹲就算開始。\n小開始 > 大計畫 💪"),
     }
     type_, msg = mapping[text]
     log_habit(user_id, type_)
@@ -1085,7 +1356,7 @@ def start_reflection(user_id: str, reply_token: str) -> None:
     reply_text(
         reply_token,
         "📝 要寫哪一種反思？",
-        qr(("訓練心得", "訓練心得"), ("週回顧", "週回顧"), ("月回顧", "月回顧")),
+        qr(("🏋️ 訓練心得", "訓練心得"), ("📆 週回顧", "週回顧"), ("📅 月回顧", "月回顧")),
     )
 
 
@@ -1112,6 +1383,22 @@ def handle_reflection(user_id: str, text: str, reply_token: str, state: dict) ->
         return
 
 
+def show_today_progress(user_id: str, reply_token: str) -> None:
+    profile = get_profile(user_id)
+    if not profile:
+        reply_text(reply_token, "請先輸入「個人資料」建立檔案再來看進度 🙏")
+        return
+    water_ml = int(get_today_habit_sum(user_id, "water"))
+    water_target = profile.get("daily_water_ml") or 2000
+    sleep_recent = get_latest_habit(user_id, "sleep")
+    workout_min = get_today_habit_sum(user_id, "workout")
+    goal = get_active_goal(user_id)
+    reply(reply_token, [
+        today_progress_flex(profile, water_ml, water_target,
+                            sleep_recent, workout_min, goal),
+    ])
+
+
 def share_fitness_knowledge(reply_token: str) -> None:
     text = claude_ask(
         "請用繁體中文，給一條今天的「健身知識每日一則」，限 3 句內，要有具體可執行的小建議。",
@@ -1127,14 +1414,14 @@ def share_fitness_knowledge(reply_token: str) -> None:
 def diet_menu(reply_token: str) -> None:
     reply_text(
         reply_token,
-        "🥗 飲食與健康，要看哪個？",
+        "🥗 想看哪個？",
         qr(
-            ("營養素比例", "營養素比例"),
-            ("今日午餐建議", "午餐建議"),
-            ("今日晚餐建議", "晚餐建議"),
-            ("運動前點心", "運動前點心"),
-            ("運動後點心", "運動後點心"),
-            ("點心衛教", "點心衛教"),
+            ("📊 營養素比例", "營養素比例"),
+            ("🍱 午餐建議", "午餐建議"),
+            ("🍽️ 晚餐建議", "晚餐建議"),
+            ("🍌 運動前點心", "運動前點心"),
+            ("🥛 運動後點心", "運動後點心"),
+            ("📖 點心衛教", "點心衛教"),
         ),
     )
 
@@ -1173,16 +1460,16 @@ def show_workout_snack(user_id: str, when: str, reply_token: str) -> None:
 def data_mgmt_menu(reply_token: str) -> None:
     reply_text(
         reply_token,
-        "⚙️ 資料管理\n選一個要做的事：",
+        "⚙️ 想做什麼？",
         qr(
-            ("💧 撤銷最近飲水", "撤銷飲水"),
-            ("🌙 撤銷最近睡眠", "撤銷睡眠"),
-            ("💪 撤銷最近運動", "撤銷運動"),
-            ("🪑 撤銷最近伸展", "撤銷伸展"),
-            ("📝 撤銷最近反思", "撤銷反思"),
-            ("🎯 放棄目前目標", "放棄目標"),
-            ("⚙️ 重設個人資料", "重設資料"),
-            ("⚠️ 刪除全部資料", "刪除全部"),
+            ("↩️ 撤銷飲水", "撤銷飲水"),
+            ("↩️ 撤銷睡眠", "撤銷睡眠"),
+            ("↩️ 撤銷運動", "撤銷運動"),
+            ("↩️ 撤銷伸展", "撤銷伸展"),
+            ("↩️ 撤銷反思", "撤銷反思"),
+            ("🎯 放棄目標", "放棄目標"),
+            ("🔄 重設 TDEE", "重設資料"),
+            ("⚠️ 刪除全部", "刪除全部"),
         ),
     )
 
@@ -1270,21 +1557,15 @@ def snack_education(reply_token: str) -> None:
 # ============================================================
 
 WELCOME = (
-    "嗨，我是你的隨身健身教練 🤖💪\n\n"
-    "三大功能：\n"
-    "🎯 目標設定與追蹤\n"
-    "🌱 自我成長與習慣\n"
-    "🥗 飲食與健康\n"
-    "⚙️ 資料管理（撤銷紀錄 / 刪除）\n\n"
-    "請先輸入「個人資料」建立 TDEE 檔案，"
-    "再輸入「選單」開始使用！"
+    "嗨，我是你的隨身健身教練 💪✨\n\n"
+    "請先輸入「個人資料」算 TDEE，\n"
+    "再輸入「選單」開始使用 ☺️"
 )
 
 
 @handler.add(FollowEvent)
 def handle_follow(event):
-    reply_text(event.reply_token, WELCOME,
-               qr(("⚙️ 個人資料", "個人資料"), ("📋 看主選單", "選單")))
+    reply(event.reply_token, [welcome_flex()])
 
 
 @handler.add(MessageEvent, message=TextMessageContent)
@@ -1384,6 +1665,9 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
         return
     if text in ("健身知識", "📚 學習一則"):
         share_fitness_knowledge(reply_token)
+        return
+    if text in ("今日", "今日進度", "📊 今日進度", "進度"):
+        show_today_progress(user_id, reply_token)
         return
 
     if text in ("飲食與健康", "🥗 飲食與健康", "飲食"):

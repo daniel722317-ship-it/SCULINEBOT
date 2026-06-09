@@ -10,6 +10,9 @@ __pycache__/
 .venv/
 venv/
 
+# Rich menu output (隨時可重新跑 setup_rich_menu.py 產生)
+richmenu.png
+
 # IDE / OS
 .vscode/
 .idea/
