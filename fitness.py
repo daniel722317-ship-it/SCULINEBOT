@@ -183,6 +183,61 @@ def users_with_goal_review(freq: str) -> list[dict]:
     return res.data or []
 
 
+def delete_latest_habit(user_id: str, type_: str) -> Optional[dict]:
+    """刪除該使用者最新一筆指定類型的 habit_log。回傳被刪的那筆。"""
+    res = (
+        supabase.table("habit_logs")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("type", type_)
+        .order("recorded_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if not res.data:
+        return None
+    record = res.data[0]
+    supabase.table("habit_logs").delete().eq("id", record["id"]).execute()
+    return record
+
+
+def delete_latest_reflection(user_id: str) -> Optional[dict]:
+    res = (
+        supabase.table("reflections")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("recorded_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if not res.data:
+        return None
+    record = res.data[0]
+    supabase.table("reflections").delete().eq("id", record["id"]).execute()
+    return record
+
+
+def abandon_active_goals(user_id: str) -> int:
+    """把所有 active 目標標為 abandoned，回傳被標記的筆數。"""
+    res = (
+        supabase.table("goals")
+        .update({"status": "abandoned"})
+        .eq("user_id", user_id)
+        .eq("status", "active")
+        .execute()
+    )
+    return len(res.data or [])
+
+
+def wipe_all_user_data(user_id: str) -> dict:
+    """刪除該使用者所有資料。回傳各表刪除筆數，方便回報。"""
+    counts = {}
+    for table in ("habit_logs", "reflections", "goals", "conversation_state", "profiles"):
+        res = supabase.table(table).delete().eq("user_id", user_id).execute()
+        counts[table] = len(res.data or [])
+    return counts
+
+
 # ============================================================
 # 3. TDEE / BMR / 營養素計算
 # ============================================================
@@ -341,6 +396,8 @@ def main_menu_flex() -> FlexMessage:
                        "#247BA0", "自我成長", "自我成長"),
             _menu_card("🥗 飲食與健康", "TDEE 規劃、彈性菜單、運動點心。",
                        "#70C1B3", "飲食與健康", "飲食與健康"),
+            _menu_card("⚙️ 資料管理", "撤銷紀錄、放棄目標、重設 TDEE、刪除全部。",
+                       "#6C757D", "資料管理", "資料管理"),
         ],
     }
     return _flex("主選單", body)
@@ -1108,6 +1165,91 @@ def show_workout_snack(user_id: str, when: str, reply_token: str) -> None:
     reply_text(reply_token, f"⚡ {when}：\n\n{text}")
 
 
+# ============================================================
+# 11.5 資料管理（撤銷 / 重設 / 刪除）
+# ============================================================
+
+
+def data_mgmt_menu(reply_token: str) -> None:
+    reply_text(
+        reply_token,
+        "⚙️ 資料管理\n選一個要做的事：",
+        qr(
+            ("💧 撤銷最近飲水", "撤銷飲水"),
+            ("🌙 撤銷最近睡眠", "撤銷睡眠"),
+            ("💪 撤銷最近運動", "撤銷運動"),
+            ("🪑 撤銷最近伸展", "撤銷伸展"),
+            ("📝 撤銷最近反思", "撤銷反思"),
+            ("🎯 放棄目前目標", "放棄目標"),
+            ("⚙️ 重設個人資料", "重設資料"),
+            ("⚠️ 刪除全部資料", "刪除全部"),
+        ),
+    )
+
+
+def undo_latest_habit(user_id: str, type_: str, label: str, reply_token: str) -> None:
+    record = delete_latest_habit(user_id, type_)
+    if not record:
+        reply_text(reply_token, f"找不到{label}紀錄可以撤銷。")
+        return
+    detail = ""
+    if record.get("amount") is not None:
+        detail = f"（{int(record['amount'])}）"
+    elif record.get("quality"):
+        detail = f"（{record['quality']}）"
+    reply_text(reply_token,
+               f"↩️ 已撤銷最近一筆{label}紀錄{detail}。\n輸入「資料管理」回到選單。")
+
+
+def undo_latest_reflection_cmd(user_id: str, reply_token: str) -> None:
+    record = delete_latest_reflection(user_id)
+    if not record:
+        reply_text(reply_token, "找不到反思紀錄可以撤銷。")
+        return
+    period_label = {"training": "訓練心得", "week": "週回顧", "month": "月回顧"}.get(
+        record.get("period", ""), "反思")
+    reply_text(reply_token, f"↩️ 已撤銷最近一筆「{period_label}」。")
+
+
+def abandon_goal_cmd(user_id: str, reply_token: str) -> None:
+    n = abandon_active_goals(user_id)
+    if n == 0:
+        reply_text(reply_token, "你目前沒有正在進行的目標。")
+    else:
+        reply_text(reply_token,
+                   f"已放棄 {n} 個目標（紀錄保留為 abandoned）。輸入「新目標」重新設定。")
+
+
+def reset_profile_cmd(user_id: str, reply_token: str) -> None:
+    """重新跑 TDEE 設定精靈（upsert 會覆蓋舊值）。"""
+    start_profile_setup(user_id, reply_token)
+
+
+def request_wipe_confirm(user_id: str, reply_token: str) -> None:
+    """第一次確認：要使用者打『確定刪除全部』。"""
+    set_state(user_id, "wipe_all", "confirm", {})
+    reply_text(
+        reply_token,
+        "⚠️ 你確定要刪除「全部資料」嗎？\n"
+        "包含：個人資料 / 目標 / 所有打卡 / 所有反思。\n"
+        "這個動作無法復原。\n\n"
+        "如果確定，請輸入「**確定刪除全部**」（一字不差）。\n"
+        "輸入其他任何文字或「取消」即取消。",
+    )
+
+
+def handle_wipe_confirm(user_id: str, text: str, reply_token: str) -> None:
+    clear_state(user_id)
+    if text.strip() != "確定刪除全部":
+        reply_text(reply_token, "已取消，沒有刪除任何資料。")
+        return
+    counts = wipe_all_user_data(user_id)
+    detail = " / ".join(f"{k}:{v}" for k, v in counts.items())
+    reply_text(reply_token,
+               f"🗑️ 已刪除全部資料。\n細項：{detail}\n\n"
+               "如果之後想再用，輸入「個人資料」重新開始 ✨")
+
+
 def snack_education(reply_token: str) -> None:
     text = (
         "📖 運動點心衛教\n\n"
@@ -1129,10 +1271,11 @@ def snack_education(reply_token: str) -> None:
 
 WELCOME = (
     "嗨，我是你的隨身健身教練 🤖💪\n\n"
-    "三個主功能：\n"
+    "三大功能：\n"
     "🎯 目標設定與追蹤\n"
     "🌱 自我成長與習慣\n"
-    "🥗 飲食與健康\n\n"
+    "🥗 飲食與健康\n"
+    "⚙️ 資料管理（撤銷紀錄 / 刪除）\n\n"
     "請先輸入「個人資料」建立 TDEE 檔案，"
     "再輸入「選單」開始使用！"
 )
@@ -1184,6 +1327,9 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
             return
         if flow == "reflection":
             handle_reflection(user_id, text, reply_token, state)
+            return
+        if flow == "wipe_all":
+            handle_wipe_confirm(user_id, text, reply_token)
             return
 
     # 3) 沒有狀態 → 走頂層指令
@@ -1242,6 +1388,35 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
 
     if text in ("飲食與健康", "🥗 飲食與健康", "飲食"):
         diet_menu(reply_token)
+        return
+
+    # 資料管理 / 刪除
+    if text in ("資料管理", "⚙️ 資料管理", "刪除", "刪除資料"):
+        data_mgmt_menu(reply_token)
+        return
+    if text == "撤銷飲水":
+        undo_latest_habit(user_id, "water", "飲水", reply_token)
+        return
+    if text == "撤銷睡眠":
+        undo_latest_habit(user_id, "sleep", "睡眠", reply_token)
+        return
+    if text == "撤銷運動":
+        undo_latest_habit(user_id, "workout", "運動", reply_token)
+        return
+    if text == "撤銷伸展":
+        undo_latest_habit(user_id, "stretch", "伸展", reply_token)
+        return
+    if text == "撤銷反思":
+        undo_latest_reflection_cmd(user_id, reply_token)
+        return
+    if text in ("放棄目標", "🎯 放棄目前目標"):
+        abandon_goal_cmd(user_id, reply_token)
+        return
+    if text in ("重設資料", "重設個人資料", "重設 TDEE"):
+        reset_profile_cmd(user_id, reply_token)
+        return
+    if text in ("刪除全部", "刪除全部資料", "⚠️ 刪除全部資料"):
+        request_wipe_confirm(user_id, reply_token)
         return
     if text == "營養素比例":
         show_macros(user_id, reply_token)
