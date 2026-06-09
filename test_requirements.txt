@@ -5,7 +5,6 @@ markdown
 beautifulsoup4
 openai
 google-genai
-anthropic
 supabase
 APScheduler
 pytz

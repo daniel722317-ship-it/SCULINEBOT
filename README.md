@@ -24,7 +24,7 @@ pinned: false
 | `with_search.py` | 把 Google Search 當 tool 用 | gemini-3-flash-preview |
 | `gemini.py` / `example01.py` | 完整版：文字 + 圖片 + 影片 + 生圖 | gemini-3-flash-preview / pro-preview |
 | `gpt4.py` | 同樣樣板換 OpenAI（gpt-4o-mini / DALL·E 3） | OpenAI |
-| **`fitness.py`** | **健身紀錄與體態調整 LINE Bot（最終專案）** | claude-opus-4-7 + Supabase |
+| **`fitness.py`** | **健身紀錄與體態調整 LINE Bot（最終專案）** | gemini-3.1-flash-lite + Supabase |
 
 `Dockerfile` 預設入口是 `fitness.py`（`CMD ["gunicorn", "-w", "1", ..., "fitness:app"]`）。要 demo 其他範例就改最後一行的模組名再 push。
 
@@ -35,13 +35,13 @@ pinned: false
 ### 三大功能
 
 1. **🎯 目標設定與追蹤**
-   - SMART 框架引導（Claude 給目標建議）
+   - SMART 框架引導（Gemini 給目標建議）
    - 自動拆解：可量化指標 / 期限 / 本週第一步 / 里程碑
    - 每日 / 每週定時推播回顧提醒
 2. **🌱 自我成長與習慣**
    - 運動打卡、飲水關卡式追蹤、睡眠回顧
    - 壞習慣紀錄（熬夜、暴食、缺乏運動）
-   - 訓練心得 / 週月回顧（Claude 自動總結）
+   - 訓練心得 / 週月回顧（Gemini 自動總結）
    - 每日健身知識一則
 3. **🥗 飲食與健康**
    - 首次設定 BMR / TDEE / 三大營養素（Mifflin-St Jeor 公式）
@@ -69,13 +69,13 @@ pinned: false
 
 | 用途 | 變數名 |
 |---|---|
-| Anthropic Claude API 金鑰 | `ANTHROPIC_API_KEY` |
+| Google Gemini API 金鑰 | `GEMINI_API_KEY` |
 | LINE Channel Secret | `LINE_CHANNEL_SECRET` |
 | LINE Channel Access Token | `LINE_CHANNEL_ACCESS_TOKEN` |
 | Supabase project URL | `SUPABASE_URL` |
 | Supabase service role / anon key | `SUPABASE_KEY` |
 
-其他課程範例檔（gemini.py / multiturn.py 等）需要的是 `GEMINI_API_KEY`，跟 fitness.py 用不同 LLM。
+fitness.py 跟其他課程範例（gemini.py / multiturn.py 等）共用同一個 `GEMINI_API_KEY`。
 
 ---
 
@@ -121,7 +121,7 @@ uv venv
 uv pip install -r requirements.txt
 
 # 設環境變數（fitness.py 需要的）
-$env:ANTHROPIC_API_KEY = "..."
+$env:GEMINI_API_KEY = "..."
 $env:LINE_CHANNEL_SECRET = "..."
 $env:LINE_CHANNEL_ACCESS_TOKEN = "..."
 $env:SUPABASE_URL = "https://xxxx.supabase.co"
@@ -130,8 +130,7 @@ $env:SUPABASE_KEY = "..."
 # 跑 fitness.py
 uv run gunicorn -w 1 -b 0.0.0.0:7860 fitness:app
 
-# 或跑其他課程範例（需要 GEMINI_API_KEY）
-$env:GEMINI_API_KEY = "..."
+# 或跑其他課程範例（環境變數共用）
 uv run flask --app replybot run --port 7860
 ```
 
@@ -144,7 +143,7 @@ uv run flask --app replybot run --port 7860
 ```powershell
 docker build -t sculinebot .
 docker run --rm -p 7860:7860 `
-  -e ANTHROPIC_API_KEY=$env:ANTHROPIC_API_KEY `
+  -e GEMINI_API_KEY=$env:GEMINI_API_KEY `
   -e LINE_CHANNEL_SECRET=$env:LINE_CHANNEL_SECRET `
   -e LINE_CHANNEL_ACCESS_TOKEN=$env:LINE_CHANNEL_ACCESS_TOKEN `
   -e SUPABASE_URL=$env:SUPABASE_URL `
@@ -156,7 +155,7 @@ docker run --rm -p 7860:7860 `
 
 ## 重要約定
 
-- **環境變數命名**：課程範例（gemini.py 等）用 `GEMINI_API_KEY`；fitness.py 用 `ANTHROPIC_API_KEY`。共同的 LINE 變數一律是 `LINE_CHANNEL_SECRET` / `LINE_CHANNEL_ACCESS_TOKEN`，不要再用舊版 `GOOGLE_API_KEY` 之類。
+- **環境變數命名**：fitness.py 跟所有課程範例（gemini.py 等）統一用 `GEMINI_API_KEY` / `LINE_CHANNEL_SECRET` / `LINE_CHANNEL_ACCESS_TOKEN`，不要再用舊版 `GOOGLE_API_KEY` 之類。
 - LINE SDK 統一用 `linebot.v3`，禁混用 v2。
 - LLM 回應的 Markdown 一律經過 `markdown` + `BeautifulSoup` 轉純文字再送 LINE。
 - gunicorn 啟動 `fitness.py` 一定要 `-w 1`，否則 APScheduler 會在每個 worker 重複觸發。

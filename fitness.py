@@ -17,11 +17,11 @@ import os
 from datetime import date, datetime
 from typing import Optional
 
-import anthropic
 import markdown
 from apscheduler.schedulers.background import BackgroundScheduler
 from bs4 import BeautifulSoup
 from flask import Flask, abort, request
+from google import genai
 from supabase import Client, create_client
 
 from linebot.v3 import WebhookHandler
@@ -57,17 +57,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger("fitness")
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-CLAUDE_MODEL = "claude-opus-4-7"
+GEMINI_MODEL = "gemini-3.1-flash-lite"
 
 app = Flask(__name__)
 
-claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -308,30 +308,30 @@ def calc_daily_water_ml(weight_kg: float) -> int:
 
 
 # ============================================================
-# 4. Claude API 包裝
+# 4. LLM 包裝（Gemini）
 # ============================================================
 
 
 def claude_ask(prompt: str, system: str = "", max_tokens: int = 1024) -> str:
-    """單次呼叫 Claude，回傳純文字（Markdown → 純文字）。
+    """單次呼叫 Gemini，回傳純文字（Markdown → 純文字）。
 
-    使用 claude-opus-4-7。LINE bot 即時對話延遲敏感，
-    不開啟 adaptive thinking（4.7 預設為關閉）。
+    使用 gemini-3.1-flash-lite — 免費方案、低延遲，
+    適合 LINE bot 即時對話。
+    （函式名歷史保留為 claude_ask，避免大量改動 caller。）
     """
     try:
-        kwargs = {
-            "model": CLAUDE_MODEL,
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
-        }
+        config = None
         if system:
-            kwargs["system"] = system
-        response = claude_client.messages.create(**kwargs)
-        text = "".join(
-            block.text for block in response.content if block.type == "text"
+            from google.genai.types import GenerateContentConfig
+            config = GenerateContentConfig(system_instruction=system)
+        response = gemini_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[prompt],
+            config=config,
         )
+        text = response.text or ""
     except Exception as exc:  # noqa: BLE001
-        logger.exception("Claude error: %s", exc)
+        logger.exception("Gemini error: %s", exc)
         return "（AI 教練暫時無法回應，請稍後再試）"
 
     html = markdown.markdown(text)
