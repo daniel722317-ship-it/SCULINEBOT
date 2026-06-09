@@ -17,11 +17,11 @@ import os
 from datetime import date, datetime
 from typing import Optional
 
+import anthropic
 import markdown
 from apscheduler.schedulers.background import BackgroundScheduler
 from bs4 import BeautifulSoup
 from flask import Flask, abort, request
-from google import genai
 from supabase import Client, create_client
 
 from linebot.v3 import WebhookHandler
@@ -57,17 +57,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger("fitness")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-GEMINI_MODEL = "gemini-3.1-flash-lite"
+CLAUDE_MODEL = "claude-opus-4-7"
 
 app = Flask(__name__)
 
-gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -239,43 +239,47 @@ def calc_daily_water_ml(weight_kg: float) -> int:
 
 
 # ============================================================
-# 4. Gemini 包裝
+# 4. Claude API 包裝
 # ============================================================
 
 
-def gemini_ask(prompt: str, system: str = "") -> str:
-    """單次呼叫 Gemini，回傳純文字（Markdown → 純文字）。"""
+def claude_ask(prompt: str, system: str = "", max_tokens: int = 1024) -> str:
+    """單次呼叫 Claude，回傳純文字（Markdown → 純文字）。
+
+    使用 claude-opus-4-7。LINE bot 即時對話延遲敏感，
+    不開啟 adaptive thinking（4.7 預設為關閉）。
+    """
     try:
-        contents = [prompt]
-        config = None
+        kwargs = {
+            "model": CLAUDE_MODEL,
+            "max_tokens": max_tokens,
+            "messages": [{"role": "user", "content": prompt}],
+        }
         if system:
-            from google.genai.types import GenerateContentConfig
-            config = GenerateContentConfig(system_instruction=system)
-        response = gemini_client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=contents,
-            config=config,
+            kwargs["system"] = system
+        response = claude_client.messages.create(**kwargs)
+        text = "".join(
+            block.text for block in response.content if block.type == "text"
         )
-        text = response.text or ""
     except Exception as exc:  # noqa: BLE001
-        logger.exception("Gemini error: %s", exc)
-        return "（AI 助教暫時無法回應，請稍後再試）"
+        logger.exception("Claude error: %s", exc)
+        return "（AI 教練暫時無法回應，請稍後再試）"
 
     html = markdown.markdown(text)
     return BeautifulSoup(html, "html.parser").get_text().strip()
 
 
-def gemini_smart_review(description: str) -> str:
+def claude_smart_review(description: str) -> str:
     system = (
         "你是一位健身教練，擅長以 SMART 框架（Specific 具體、Measurable 可量化、"
         "Achievable 可達成、Relevant 相關、Time-bound 有期限）幫助學員精煉目標。"
         "請用繁體中文、不超過 5 行，先肯定學員的方向，再指出哪些 SMART 維度還可加強，"
         "並用 1 句話示範重寫後的目標。語氣溫暖、具體、不囉嗦。"
     )
-    return gemini_ask(f"我的目標：{description}", system=system)
+    return claude_ask(f"我的目標：{description}", system=system)
 
 
-def gemini_reflection_summary(period: str, content: str) -> str:
+def claude_reflection_summary(period: str, content: str) -> str:
     period_label = {"training": "訓練心得", "week": "週回顧", "month": "月回顧"}.get(period, "反思")
     system = (
         f"你是一位健身教練兼成長教練。學員剛完成一段 {period_label}。"
@@ -285,10 +289,10 @@ def gemini_reflection_summary(period: str, content: str) -> str:
         "3) 下一步建議行動\n"
         "整體不超過 6 行，語氣鼓勵但具體。"
     )
-    return gemini_ask(content, system=system)
+    return claude_ask(content, system=system)
 
 
-def gemini_meal_suggestion(profile: dict, meal_slot: str) -> str:
+def claude_meal_suggestion(profile: dict, meal_slot: str) -> str:
     style = "外食族" if profile.get("eating_style") == "outside" else "自煮族"
     veg = "素食" if profile.get("is_vegetarian") else "葷食"
     target = profile.get("target_type", "maintain")
@@ -302,10 +306,10 @@ def gemini_meal_suggestion(profile: dict, meal_slot: str) -> str:
         f"條件：{style}、{veg}、每日目標熱量約 {int(profile.get('target_kcal') or 0)} kcal、"
         f"目標蛋白質約 {int(profile.get('protein_g') or 0)} g。"
     )
-    return gemini_ask(prompt, system=system)
+    return claude_ask(prompt, system=system)
 
 
-def gemini_workout_snack(profile: dict, when: str) -> str:
+def claude_workout_snack(profile: dict, when: str) -> str:
     workout_time = profile.get("workout_time", "evening")
     workout_label = {"morning": "晨練", "afternoon": "下午練", "evening": "夜練"}.get(workout_time, "夜練")
     system = (
@@ -314,7 +318,7 @@ def gemini_workout_snack(profile: dict, when: str) -> str:
         "整體不超過 5 行。"
     )
     prompt = f"我是 {workout_label} 的學員，請給我「{when}」點心建議。"
-    return gemini_ask(prompt, system=system)
+    return claude_ask(prompt, system=system)
 
 
 # ============================================================
@@ -862,7 +866,7 @@ def handle_goal_setting(user_id: str, text: str, reply_token: str, state: dict) 
 
     if step == "describe":
         data["description"] = text
-        review = gemini_smart_review(text)
+        review = claude_smart_review(text)
         data["smart_specific"] = text
         set_state(user_id, "goal_setting", "measurable", data)
         reply(reply_token, [
@@ -1044,7 +1048,7 @@ def handle_reflection(user_id: str, text: str, reply_token: str, state: dict) ->
         return
 
     if step == "content":
-        summary = gemini_reflection_summary(data["period"], text)
+        summary = claude_reflection_summary(data["period"], text)
         insert_reflection(user_id, data["period"], text, summary)
         clear_state(user_id)
         reply_text(reply_token, f"📌 教練看完你的反思：\n\n{summary}")
@@ -1052,7 +1056,7 @@ def handle_reflection(user_id: str, text: str, reply_token: str, state: dict) ->
 
 
 def share_fitness_knowledge(reply_token: str) -> None:
-    text = gemini_ask(
+    text = claude_ask(
         "請用繁體中文，給一條今天的「健身知識每日一則」，限 3 句內，要有具體可執行的小建議。",
     )
     reply_text(reply_token, f"📚 今日健身知識：\n\n{text}")
@@ -1091,7 +1095,7 @@ def show_meal_suggestion(user_id: str, slot: str, reply_token: str) -> None:
     if not profile:
         reply_text(reply_token, "請先輸入「個人資料」建立檔案。")
         return
-    text = gemini_meal_suggestion(profile, slot)
+    text = claude_meal_suggestion(profile, slot)
     reply_text(reply_token, f"🍱 {slot}建議：\n\n{text}")
 
 
@@ -1100,7 +1104,7 @@ def show_workout_snack(user_id: str, when: str, reply_token: str) -> None:
     if not profile:
         reply_text(reply_token, "請先輸入「個人資料」建立檔案。")
         return
-    text = gemini_workout_snack(profile, when)
+    text = claude_workout_snack(profile, when)
     reply_text(reply_token, f"⚡ {when}：\n\n{text}")
 
 
@@ -1265,8 +1269,8 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
                    qr(("⚙️ 個人資料", "個人資料"), ("📋 看主選單", "選單")))
         return
 
-    # 5) 自由提問 → 丟給 Gemini 當教練回答
-    answer = gemini_ask(
+    # 5) 自由提問 → 丟給 Claude 當教練回答
+    answer = claude_ask(
         text,
         system=(
             "你是繁體中文的健身教練，回答簡潔（5 行內），給具體可執行的建議，"

@@ -4,7 +4,8 @@ line-bot-sdk # LINE Bot的必須安裝項
 markdown # 讓輸出格式漂亮，並且解析markdown文件用的套件
 beautifulsoup4 # 讓輸出格式漂亮的套件
 openai # 使用OpenAI的模型(此次課程為示範不使用)
-google-genai # 使用Google Gemini API的套件
+google-genai # 使用Google Gemini API的套件（其他課程範例用）
+anthropic # fitness.py：呼叫 Claude API
 Pillow # 處理圖片
 supabase # fitness.py：以 PostgreSQL 儲存使用者資料、目標、習慣紀錄
 APScheduler # fitness.py：定時推播飲水/睡眠/伸展提醒
