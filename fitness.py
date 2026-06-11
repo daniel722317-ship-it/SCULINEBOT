@@ -2317,10 +2317,9 @@ def self_growth_menu(reply_token: str) -> None:
         reply_token,
         "🌱 今天想紀錄什麼？",
         qr(
-            ("💪 運動打卡", "運動打卡"),
+            ("🏋️ 運動", "運動"),
             ("💧 喝水", "飲水"),
             ("🌙 睡眠", "睡眠紀錄"),
-            ("🏋️ 體態", "體態"),
             ("📝 寫反思", "反思"),
             ("🚫 壞習慣", "壞習慣"),
             ("📚 知識補給", "健身知識"),
@@ -2392,10 +2391,10 @@ def cut_checkin_menu(reply_token: str) -> None:
 
 
 def body_composition_menu(reply_token: str) -> None:
-    """體態主選單：分增肌 / 減脂。"""
+    """運動主選單：分增肌 / 減脂。"""
     reply_text(
         reply_token,
-        "🏋️ 體態 — 你想往哪個方向？",
+        "🏋️ 運動 — 你想往哪個方向？",
         qr(
             ("🔥 增肌", "增肌"),
             ("✂️ 減脂", "減脂"),
@@ -2931,7 +2930,8 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
     if text in ("睡眠紀錄", "🌙 睡眠紀錄", "睡眠", "睡眠打卡", "🌙 睡眠打卡"):
         show_sleep_card(reply_token)
         return
-    if text in ("體態", "🏋️ 體態", "健身", "🏋️ 健身", "健身專區"):
+    if text in ("運動", "🏋️ 運動", "體態", "🏋️ 體態",
+                "健身", "🏋️ 健身", "健身專區"):
         body_composition_menu(reply_token)
         return
     if text in ("增肌", "🔥 增肌", "增肌專區"):
