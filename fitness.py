@@ -341,13 +341,24 @@ def get_latest_strength(user_id: str, exercise: str) -> Optional[dict]:
 
 
 @_sb_retry
-def get_all_lifts_overview(user_id: str) -> dict:
-    """4 大主項各取最新一筆。"""
+def get_all_lifts_overview(user_id: str, limit: int = 12) -> dict:
+    """取使用者紀錄過的所有動作，每個動作取最新一筆。
+
+    最近紀錄的動作排在前面，最多 limit 個。
+    """
+    res = (
+        supabase.table("strength_logs")
+        .select("*").eq("user_id", user_id)
+        .order("recorded_at", desc=True)
+        .execute()
+    )
     out = {}
-    for key in STRENGTH_LIFTS:
-        latest = get_latest_strength(user_id, key)
-        if latest:
-            out[key] = latest
+    for row in (res.data or []):
+        ex = row["exercise"]
+        if ex not in out:
+            out[ex] = row
+        if len(out) >= limit:
+            break
     return out
 
 
@@ -1867,43 +1878,64 @@ def menu_detail_carousel_flex(menu_key: str) -> FlexMessage:
 
 # --- 力量追蹤 Flex ---
 
-STRENGTH_LIFTS = {
-    "squat":    ("squat", "🏋️ 深蹲",    C_PRIMARY),
-    "bench":    ("bench", "💪 臥推",    "#3B82F6"),
-    "deadlift": ("deadlift", "🦴 硬舉", COLOR_GOAL),
-    "ohp":      ("ohp", "🙌 肩推",      C_ACCENT),
-}
+def _exercise_icon(name: str) -> str:
+    """根據動作名稱推測 emoji 圖示，常見 keyword 對應。"""
+    n = name.lower()
+    if any(k in n for k in ("深蹲", "squat")):
+        return "🏋️"
+    if any(k in n for k in ("臥推", "bench")):
+        return "💪"
+    if any(k in n for k in ("硬舉", "deadlift")):
+        return "🦴"
+    if any(k in n for k in ("肩推", "ohp", "shoulder")):
+        return "🙌"
+    if any(k in n for k in ("二頭", "彎舉", "curl", "bicep")):
+        return "💪"
+    if any(k in n for k in ("三頭", "tricep")):
+        return "💪"
+    if any(k in n for k in ("划船", "row")):
+        return "🚣"
+    if any(k in n for k in ("飛鳥", "fly")):
+        return "🦅"
+    if any(k in n for k in ("下拉", "pulldown", "pull")):
+        return "🪢"
+    return "💪"
 
 
 def strength_overview_flex(records: dict) -> FlexMessage:
-    """4 大主項力量總覽。records: {lift_key: {one_rm, weight, reps, recorded_at}}"""
-    rows = []
-    for key, (_, label, color) in STRENGTH_LIFTS.items():
-        r = records.get(key)
-        if r:
+    """我的力量總覽：動態列出使用者紀錄過的所有動作（最近排前面）。"""
+    if not records:
+        body_contents = [{
+            "type": "text",
+            "text": "尚未紀錄任何動作\n\n打「力量紀錄」開始追蹤你的訓練 💪",
+            "wrap": True, "size": "sm", "color": C_TEXT_SOFT,
+            "align": "center",
+        }]
+    else:
+        rows = []
+        for ex_name, r in records.items():
+            icon = _exercise_icon(ex_name)
             val = f"{r['one_rm']:.0f} kg"
             sets_s = r.get("sets") or 1
             sub = f"最近：{int(r['weight_kg'])}kg × {r['reps']} × {sets_s}組"
-        else:
-            val = "—"
-            sub = "尚未紀錄"
-        rows.append({
-            "type": "box", "layout": "vertical", "spacing": "xs",
-            "contents": [
-                {"type": "box", "layout": "horizontal",
-                 "contents": [
-                     {"type": "text", "text": label, "size": "sm",
-                      "weight": "bold", "color": C_TEXT_DARK, "flex": 3},
-                     {"type": "text", "text": val, "size": "lg",
-                      "weight": "bold", "color": color,
-                      "flex": 3, "align": "end"},
-                 ]},
-                {"type": "text", "text": sub, "size": "xs",
-                 "color": C_TEXT_SOFT, "margin": "xs"},
-            ],
-        })
-        rows.append({"type": "separator", "color": C_DIVIDER})
-    rows = rows[:-1]
+            rows.append({
+                "type": "box", "layout": "vertical", "spacing": "xs",
+                "contents": [
+                    {"type": "box", "layout": "horizontal",
+                     "contents": [
+                         {"type": "text", "text": f"{icon} {ex_name}",
+                          "size": "sm", "weight": "bold",
+                          "color": C_TEXT_DARK, "flex": 5, "wrap": True},
+                         {"type": "text", "text": val, "size": "lg",
+                          "weight": "bold", "color": C_PRIMARY,
+                          "flex": 3, "align": "end"},
+                     ]},
+                    {"type": "text", "text": sub, "size": "xs",
+                     "color": C_TEXT_SOFT, "margin": "xs"},
+                ],
+            })
+            rows.append({"type": "separator", "color": C_DIVIDER})
+        body_contents = rows[:-1]
 
     return _flex("我的力量", {
         "type": "bubble", "size": "mega",
@@ -1919,12 +1951,13 @@ def strength_overview_flex(records: dict) -> FlexMessage:
         },
         "body": {
             "type": "box", "layout": "vertical", "spacing": "lg", "paddingAll": "16px",
-            "contents": rows,
+            "contents": body_contents,
         },
         "footer": {
             "type": "box", "layout": "vertical", "paddingAll": "12px",
             "contents": [
-                {"type": "button", "style": "primary", "color": C_PRIMARY, "height": "sm",
+                {"type": "button", "style": "primary",
+                 "color": C_PRIMARY, "height": "sm",
                  "action": {"type": "message", "label": "✏️ 紀錄新一筆",
                             "text": "力量紀錄"}},
             ],
@@ -2404,24 +2437,12 @@ def show_strength_overview(user_id: str, reply_token: str) -> None:
 
 
 def start_strength_log(user_id: str, reply_token: str) -> None:
-    """力量紀錄精靈：選動作 → 重量 → 次數。"""
+    """力量紀錄精靈：自由輸入動作名稱 → 重量 → 次數 → 組數。"""
     set_state(user_id, "strength_log", "exercise", {})
     reply_text(
         reply_token,
-        "💪 紀錄哪個動作？",
-        qr(
-            ("🏋️ 深蹲", "深蹲"),
-            ("💪 臥推", "臥推"),
-            ("🦴 硬舉", "硬舉"),
-            ("🙌 肩推", "肩推"),
-        ),
+        "💪 今天練什麼？直接打動作名稱\n（例：深蹲、啞鈴二頭、滑輪下拉、保加利亞分腿蹲）",
     )
-
-
-_STRENGTH_LIFT_ZH = {
-    "深蹲": "squat", "臥推": "bench",
-    "硬舉": "deadlift", "肩推": "ohp",
-}
 
 
 def handle_strength_log(user_id: str, text: str, reply_token: str, state: dict) -> None:
@@ -2429,16 +2450,14 @@ def handle_strength_log(user_id: str, text: str, reply_token: str, state: dict) 
     data = state["data"] or {}
 
     if step == "exercise":
-        ex_key = _STRENGTH_LIFT_ZH.get(text)
-        if not ex_key:
-            reply_text(reply_token, "請選四大主項其中一個",
-                       qr(("🏋️ 深蹲", "深蹲"), ("💪 臥推", "臥推"),
-                          ("🦴 硬舉", "硬舉"), ("🙌 肩推", "肩推")))
+        ex_name = text.strip()
+        if not ex_name or len(ex_name) > 50:
+            reply_text(reply_token,
+                       "動作名稱不能空白或超過 50 字，請再打一次")
             return
-        data["exercise"] = ex_key
-        data["exercise_zh"] = text
+        data["exercise"] = ex_name
         set_state(user_id, "strength_log", "weight", data)
-        reply_text(reply_token, f"{text} 多少公斤？（直接打數字）")
+        reply_text(reply_token, f"{ex_name} 多少公斤？（直接打數字）")
         return
 
     if step == "weight":
@@ -2481,10 +2500,11 @@ def handle_strength_log(user_id: str, text: str, reply_token: str, state: dict) 
         one_rm = rec.get("one_rm", calc_one_rm(data["weight"], reps))
         reply_text(
             reply_token,
-            f"✅ 已紀錄 {data['exercise_zh']} "
+            f"✅ 已紀錄 {data['exercise']} "
             f"{int(data['weight'])}kg × {reps} × {sets} 組\n\n"
-            f"💪 估算 1RM：{one_rm:.0f} kg\n\n"
-            "輸入「我的力量」看 4 大主項總覽。",
+            f"💪 估算 1RM：{one_rm:.0f} kg",
+            qr(("💪 看我的力量", "我的力量"),
+               ("✏️ 再紀錄一筆", "力量紀錄")),
         )
         return
 
