@@ -94,6 +94,29 @@ EMOJI_FONT = _find_font([
 ], 280)
 
 
+def _paste_centered_emoji(canvas: Image.Image, emoji: str,
+                          cx: int, top_y: int) -> None:
+    """把彩色 emoji 真實渲染後，用實際像素 bbox 水平置中貼上。
+
+    為什麼不用 draw.textbbox 直接算：彩色 emoji（如 🏋️ ⚙️）的字型
+    bbox 跟實際渲染像素有 bearing 偏差，直接套公式會偏右。
+    """
+    pad = 60
+    side = 500
+    temp = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+    temp_draw = ImageDraw.Draw(temp)
+    try:
+        temp_draw.text((pad, pad), emoji, font=EMOJI_FONT, embedded_color=True)
+    except Exception:
+        temp_draw.text((pad, pad), emoji, font=EMOJI_FONT, fill=(255, 255, 255, 255))
+    real_bbox = temp.getbbox()
+    if real_bbox is None:
+        return
+    cropped = temp.crop(real_bbox)
+    paste_x = cx - cropped.width // 2
+    canvas.paste(cropped, (paste_x, top_y), cropped)
+
+
 def draw_image() -> Path:
     img = Image.new("RGBA", (WIDTH, HEIGHT), (255, 248, 240, 255))  # 暖白底
     draw = ImageDraw.Draw(img)
@@ -110,25 +133,12 @@ def draw_image() -> Path:
 
         cx = (x0 + x1) // 2
 
-        # Emoji（上半）— 用 embedded_color 支援彩色 emoji
-        try:
-            bbox = draw.textbbox((0, 0), emoji, font=EMOJI_FONT, embedded_color=True)
-            ew = bbox[2] - bbox[0]
-            eh = bbox[3] - bbox[1]
-            draw.text(
-                (cx - ew // 2 - bbox[0], y0 + 140 - bbox[1]),
-                emoji, font=EMOJI_FONT, embedded_color=True,
-            )
-        except Exception as exc:
-            # Fallback：直接畫 emoji 字（單色）
-            draw.text((cx, y0 + 200), emoji, anchor="mm",
-                      font=EMOJI_FONT, fill="white")
+        # Emoji（上半）— 真實渲染置中
+        _paste_centered_emoji(img, emoji, cx, y0 + 100)
 
-        # 中文標籤（下半）
-        bbox = draw.textbbox((0, 0), label, font=LABEL_FONT)
-        lw = bbox[2] - bbox[0]
-        draw.text((cx - lw // 2 - bbox[0], y0 + 560),
-                  label, font=LABEL_FONT, fill="white")
+        # 中文標籤（下半）— 用 anchor="mt" 直接居中
+        draw.text((cx, y0 + 560), label, font=LABEL_FONT,
+                  fill="white", anchor="mt")
 
     out_path = Path(__file__).parent / "richmenu.png"
     img.convert("RGB").save(out_path, "PNG", optimize=True)
