@@ -81,6 +81,7 @@ create table if not exists strength_logs (
     exercise text not null,          -- 'squat' | 'bench' | 'deadlift' | 'ohp'
     weight_kg numeric not null,
     reps int not null,
+    sets int default 1,              -- 組數
     one_rm numeric not null,         -- Brzycki 公式估算
     recorded_at timestamptz default now()
 );

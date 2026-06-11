@@ -315,7 +315,8 @@ def set_notify_pref(user_id: str, key: str, value: bool) -> None:
 
 
 @_sb_retry
-def log_strength(user_id: str, exercise: str, weight_kg: float, reps: int) -> dict:
+def log_strength(user_id: str, exercise: str, weight_kg: float,
+                 reps: int, sets: int = 1) -> dict:
     """新增一筆力量紀錄。回傳含計算後 1RM 的列。"""
     one_rm = round(calc_one_rm(weight_kg, reps), 1)
     res = supabase.table("strength_logs").insert({
@@ -323,6 +324,7 @@ def log_strength(user_id: str, exercise: str, weight_kg: float, reps: int) -> di
         "exercise": exercise,
         "weight_kg": weight_kg,
         "reps": reps,
+        "sets": sets,
         "one_rm": one_rm,
     }).execute()
     return res.data[0] if res.data else {"one_rm": one_rm}
@@ -1880,7 +1882,8 @@ def strength_overview_flex(records: dict) -> FlexMessage:
         r = records.get(key)
         if r:
             val = f"{r['one_rm']:.0f} kg"
-            sub = f"最近：{int(r['weight_kg'])}kg × {r['reps']}"
+            sets_s = r.get("sets") or 1
+            sub = f"最近：{int(r['weight_kg'])}kg × {r['reps']} × {sets_s}組"
         else:
             val = "—"
             sub = "尚未紀錄"
@@ -2457,13 +2460,30 @@ def handle_strength_log(user_id: str, text: str, reply_token: str, state: dict) 
         if reps < 1 or reps > 20:
             reply_text(reply_token, "次數請填 1-20 之間。")
             return
-        rec = log_strength(user_id, data["exercise"], data["weight"], reps)
+        data["reps"] = reps
+        set_state(user_id, "strength_log", "sets", data)
+        reply_text(reply_token, "做了幾組？（直接打數字）")
+        return
+
+    if step == "sets":
+        try:
+            sets = int(text)
+        except ValueError:
+            reply_text(reply_token, "請打數字，例如 4")
+            return
+        if sets < 1 or sets > 20:
+            reply_text(reply_token, "組數請填 1-20 之間。")
+            return
+        reps = data["reps"]
+        rec = log_strength(user_id, data["exercise"],
+                           data["weight"], reps, sets)
         clear_state(user_id)
         one_rm = rec.get("one_rm", calc_one_rm(data["weight"], reps))
         reply_text(
             reply_token,
-            f"✅ 已紀錄 {data['exercise_zh']} {int(data['weight'])}kg × {reps}\n\n"
-            f"💪 估算 1RM：**{one_rm:.0f} kg**\n\n"
+            f"✅ 已紀錄 {data['exercise_zh']} "
+            f"{int(data['weight'])}kg × {reps} × {sets} 組\n\n"
+            f"💪 估算 1RM：{one_rm:.0f} kg\n\n"
             "輸入「我的力量」看 4 大主項總覽。",
         )
         return
