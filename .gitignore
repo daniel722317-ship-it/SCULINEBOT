@@ -13,6 +13,10 @@ venv/
 # Rich menu output (隨時可重新跑 setup_rich_menu.py 產生)
 richmenu.png
 
+# Debug logs
+hflog.txt
+*.log
+
 # IDE / OS
 .vscode/
 .idea/
