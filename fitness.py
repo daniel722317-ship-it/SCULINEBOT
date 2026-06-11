@@ -1695,11 +1695,29 @@ def checkin_menu(reply_token: str) -> None:
     )
 
 
-def fitness_section_placeholder(reply_token: str) -> None:
-    """健身區（內容建置中）。"""
+def body_composition_menu(reply_token: str) -> None:
+    """體態主選單：分增肌 / 減脂。"""
     reply_text(
         reply_token,
-        "🏋️ 健身專區建置中⋯\n敬請期待 ✨\n\n暫時可用「打卡」紀錄今天的運動分鐘。",
+        "🏋️ 體態 — 你想往哪個方向？",
+        qr(
+            ("🔥 增肌", "增肌"),
+            ("✂️ 減脂", "減脂"),
+        ),
+    )
+
+
+def bulk_section_placeholder(reply_token: str) -> None:
+    reply_text(
+        reply_token,
+        "🔥 增肌專區建置中⋯\n敬請期待 ✨",
+    )
+
+
+def cut_section_placeholder(reply_token: str) -> None:
+    reply_text(
+        reply_token,
+        "✂️ 減脂專區建置中⋯\n敬請期待 ✨",
     )
 
 
@@ -2079,8 +2097,14 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
     if text in ("睡眠紀錄", "🌙 睡眠紀錄", "睡眠", "睡眠打卡", "🌙 睡眠打卡"):
         show_sleep_card(reply_token)
         return
-    if text in ("健身", "🏋️ 健身", "健身專區"):
-        fitness_section_placeholder(reply_token)
+    if text in ("體態", "🏋️ 體態", "健身", "🏋️ 健身", "健身專區"):
+        body_composition_menu(reply_token)
+        return
+    if text in ("增肌", "🔥 增肌", "增肌專區"):
+        bulk_section_placeholder(reply_token)
+        return
+    if text in ("減脂", "✂️ 減脂", "減脂專區"):
+        cut_section_placeholder(reply_token)
         return
     if text in ("日曆", "📅 日曆", "行事曆"):
         calendar_section_placeholder(reply_token)
