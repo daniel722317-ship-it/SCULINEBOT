@@ -1682,6 +1682,26 @@ def show_sleep_card(reply_token: str) -> None:
     reply(reply_token, [sleep_card_flex()])
 
 
+def checkin_menu(reply_token: str) -> None:
+    """打卡子選單：運動 / 睡眠。"""
+    reply_text(
+        reply_token,
+        "✅ 想打哪一張卡？",
+        qr(
+            ("💪 運動打卡", "運動打卡"),
+            ("🌙 睡眠打卡", "睡眠打卡"),
+        ),
+    )
+
+
+def fitness_section_placeholder(reply_token: str) -> None:
+    """健身區（內容建置中）。"""
+    reply_text(
+        reply_token,
+        "🏋️ 健身專區建置中⋯\n敬請期待 ✨\n\n暫時可用「打卡」紀錄今天的運動分鐘。",
+    )
+
+
 def start_workout_log(user_id: str, reply_token: str) -> None:
     set_state(user_id, "workout_log", "minutes", {})
     reply_text(reply_token, "💪 今天動了幾分鐘？（直接打數字）")
@@ -2038,14 +2058,20 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
     if text in ("自我成長", "自我成長與習慣", "🌱 自我成長"):
         self_growth_menu(reply_token)
         return
+    if text in ("打卡", "✅ 打卡"):
+        checkin_menu(reply_token)
+        return
     if text in ("運動打卡", "💪 運動打卡"):
         start_workout_log(user_id, reply_token)
         return
     if text in ("飲水", "💧 飲水", "飲水紀錄"):
         show_water_card(user_id, reply_token)
         return
-    if text in ("睡眠紀錄", "🌙 睡眠紀錄", "睡眠"):
+    if text in ("睡眠紀錄", "🌙 睡眠紀錄", "睡眠", "睡眠打卡", "🌙 睡眠打卡"):
         show_sleep_card(reply_token)
+        return
+    if text in ("健身", "🏋️ 健身", "健身專區"):
+        fitness_section_placeholder(reply_token)
         return
     if text in ("反思", "📝 反思"):
         start_reflection(user_id, reply_token)
