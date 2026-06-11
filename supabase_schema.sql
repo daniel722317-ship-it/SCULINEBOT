@@ -23,6 +23,10 @@ create table if not exists profiles (
     eating_style text,               -- 'outside' | 'home'
     workout_time text,               -- 'morning' | 'afternoon' | 'evening'
     daily_water_ml int,
+    notify_sleep boolean default true,    -- 早安睡眠回顧推播
+    notify_water boolean default true,    -- 飲水提醒推播
+    notify_stretch boolean default true,  -- 久坐伸展推播
+    notify_goal boolean default true,     -- 目標回顧推播
     created_at timestamptz default now(),
     updated_at timestamptz default now()
 );

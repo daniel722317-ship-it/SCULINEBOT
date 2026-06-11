@@ -243,6 +243,37 @@ def abandon_active_goals(user_id: str) -> int:
     return len(res.data or [])
 
 
+NOTIFY_KEYS = ("sleep", "water", "stretch", "goal")
+
+
+def get_notify_prefs(user_id: str) -> dict:
+    """回傳 {sleep, water, stretch, goal} 的 bool。沒檔案視同全開。"""
+    p = get_profile(user_id)
+    if not p:
+        return {k: True for k in NOTIFY_KEYS}
+    return {
+        k: (p.get(f"notify_{k}") if p.get(f"notify_{k}") is not None else True)
+        for k in NOTIFY_KEYS
+    }
+
+
+def set_notify_pref(user_id: str, key: str, value: bool) -> None:
+    if key not in NOTIFY_KEYS:
+        return
+    supabase.table("profiles").update({
+        f"notify_{key}": value,
+        "updated_at": datetime.utcnow().isoformat(),
+    }).eq("user_id", user_id).execute()
+
+
+def users_with_notify_on(key: str) -> list[str]:
+    """回傳該通知開著的所有 user_id。"""
+    if key not in NOTIFY_KEYS:
+        return []
+    res = supabase.table("profiles").select("user_id").eq(f"notify_{key}", True).execute()
+    return [row["user_id"] for row in (res.data or [])]
+
+
 def wipe_all_user_data(user_id: str) -> dict:
     """刪除該使用者所有資料。回傳各表刪除筆數，方便回報。"""
     counts = {}
@@ -938,6 +969,78 @@ def today_progress_flex(profile: dict, water_ml: int, water_target: int,
     return _flex("今日進度", body)
 
 
+NOTIFY_META = {
+    "sleep":   ("🌙 早安睡眠回顧", "每日 07:30",                COLOR_SLEEP),
+    "water":   ("💧 飲水提醒",     "每日 09 / 12 / 15 / 18",     COLOR_WATER),
+    "stretch": ("🪑 久坐伸展",     "週一-五 11 / 14 / 16",       COLOR_STRETCH),
+    "goal":    ("🎯 目標回顧",     "每日 21:00 / 週日 20:00",    COLOR_GOAL),
+}
+
+
+def notify_settings_flex(prefs: dict) -> FlexMessage:
+    rows = []
+    for key in NOTIFY_KEYS:
+        title, sched, color = NOTIFY_META[key]
+        is_on = bool(prefs.get(key, True))
+        rows.append(_notify_row(title, sched, color, is_on, key))
+        rows.append({"type": "separator", "color": C_DIVIDER})
+    rows = rows[:-1]  # 去掉最後一條 separator
+
+    body = {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box", "layout": "vertical", "backgroundColor": C_PRIMARY,
+            "paddingAll": "20px", "spacing": "xs",
+            "contents": [
+                {"type": "text", "text": "🔔 通知設定",
+                 "color": "#FFFFFF", "weight": "bold", "size": "lg"},
+                {"type": "text", "text": "點 ON/OFF 切換各推播",
+                 "color": "#FFFFFF", "size": "sm", "margin": "sm"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "md", "paddingAll": "16px",
+            "contents": rows,
+        },
+        "footer": {
+            "type": "box", "layout": "vertical", "paddingAll": "12px",
+            "contents": [
+                {"type": "button", "style": "link", "height": "sm",
+                 "action": {"type": "message", "label": "回資料管理", "text": "資料管理"}},
+            ],
+        },
+    }
+    return _flex("通知設定", body)
+
+
+def _notify_row(title: str, sched: str, color: str, is_on: bool, key: str) -> dict:
+    state_label = "🟢 ON" if is_on else "⚪ OFF"
+    btn_style = "primary" if is_on else "secondary"
+    btn_color = color if is_on else "#BBBBBB"
+    return {
+        "type": "box", "layout": "horizontal", "spacing": "md",
+        "contents": [
+            {"type": "box", "layout": "vertical", "flex": 5,
+             "contents": [
+                 {"type": "text", "text": title, "size": "sm",
+                  "weight": "bold", "color": C_TEXT_DARK},
+                 {"type": "text", "text": sched, "size": "xs",
+                  "color": C_TEXT_SOFT, "margin": "xs"},
+                 {"type": "text", "text": state_label, "size": "xs",
+                  "color": (color if is_on else C_TEXT_SOFT),
+                  "margin": "xs", "weight": "bold"},
+             ]},
+            {"type": "button", "style": btn_style, "color": btn_color,
+             "height": "sm", "flex": 3, "gravity": "center",
+             "action": {"type": "postback",
+                        "label": "關閉" if is_on else "開啟",
+                        "data": f"action=notify_toggle&type={key}",
+                        "displayText": f"{'關閉' if is_on else '開啟'} {title}"}},
+        ],
+    }
+
+
 # ============================================================
 # 6. Quick Reply 與選單工具
 # ============================================================
@@ -1462,6 +1565,7 @@ def data_mgmt_menu(reply_token: str) -> None:
         reply_token,
         "⚙️ 想做什麼？",
         qr(
+            ("🔔 通知設定", "通知設定"),
             ("↩️ 撤銷飲水", "撤銷飲水"),
             ("↩️ 撤銷睡眠", "撤銷睡眠"),
             ("↩️ 撤銷運動", "撤銷運動"),
@@ -1472,6 +1576,15 @@ def data_mgmt_menu(reply_token: str) -> None:
             ("⚠️ 刪除全部", "刪除全部"),
         ),
     )
+
+
+def show_notify_settings(user_id: str, reply_token: str) -> None:
+    profile = get_profile(user_id)
+    if not profile:
+        reply_text(reply_token, "請先輸入「個人資料」建立檔案 🙏")
+        return
+    prefs = get_notify_prefs(user_id)
+    reply(reply_token, [notify_settings_flex(prefs)])
 
 
 def undo_latest_habit(user_id: str, type_: str, label: str, reply_token: str) -> None:
@@ -1678,6 +1791,9 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
     if text in ("資料管理", "⚙️ 資料管理", "刪除", "刪除資料"):
         data_mgmt_menu(reply_token)
         return
+    if text in ("通知設定", "🔔 通知設定", "推播設定"):
+        show_notify_settings(user_id, reply_token)
+        return
     if text == "撤銷飲水":
         undo_latest_habit(user_id, "water", "飲水", reply_token)
         return
@@ -1778,6 +1894,26 @@ def handle_postback(event):
             reply_text(reply_token,
                        "🎉 恭喜完成目標！要不要設下一個？輸入「新目標」開始。")
             return
+
+        if action == "notify_toggle":
+            key = params.get("type", "")
+            if key not in NOTIFY_KEYS:
+                reply_text(reply_token, "未知的通知類型 🤔")
+                return
+            profile = get_profile(user_id)
+            if not profile:
+                reply_text(reply_token, "請先輸入「個人資料」建立檔案 🙏")
+                return
+            prefs = get_notify_prefs(user_id)
+            new_val = not prefs[key]
+            set_notify_pref(user_id, key, new_val)
+            prefs[key] = new_val
+            title = NOTIFY_META[key][0]
+            reply(reply_token, [
+                TextMessage(text=f"{'🟢 已開啟' if new_val else '⚪ 已關閉'} {title}"),
+                notify_settings_flex(prefs),
+            ])
+            return
     except Exception as exc:  # noqa: BLE001
         logger.exception("postback error: %s", exc)
         reply_text(reply_token, "教練處理時打結了 🤯 請稍後再試。")
@@ -1789,8 +1925,9 @@ def handle_postback(event):
 
 
 def job_morning_sleep_recap():
-    logger.info("[scheduler] 推播早安睡眠回顧")
-    for uid in all_active_user_ids():
+    uids = users_with_notify_on("sleep")
+    logger.info("[scheduler] 推播早安睡眠回顧 → %d 人", len(uids))
+    for uid in uids:
         push(uid, [
             TextMessage(text="早安 ☀️ 先做今天的第一個紀錄："),
             sleep_card_flex(),
@@ -1798,8 +1935,9 @@ def job_morning_sleep_recap():
 
 
 def job_water_reminder():
-    logger.info("[scheduler] 推播飲水提醒")
-    for uid in all_active_user_ids():
+    uids = users_with_notify_on("water")
+    logger.info("[scheduler] 推播飲水提醒 → %d 人", len(uids))
+    for uid in uids:
         profile = get_profile(uid)
         if not profile:
             continue
@@ -1812,14 +1950,17 @@ def job_stretch_reminder():
     now = datetime.now()
     if now.weekday() >= 5:  # 週六日不推
         return
-    logger.info("[scheduler] 推播久坐伸展")
-    for uid in all_active_user_ids():
+    uids = users_with_notify_on("stretch")
+    logger.info("[scheduler] 推播久坐伸展 → %d 人", len(uids))
+    for uid in uids:
         push(uid, [stretch_card_flex()])
 
 
 def job_goal_review(freq: str):
-    logger.info("[scheduler] 推播目標回顧 freq=%s", freq)
-    for goal in users_with_goal_review(freq):
+    notify_uids = set(users_with_notify_on("goal"))
+    targets = [g for g in users_with_goal_review(freq) if g["user_id"] in notify_uids]
+    logger.info("[scheduler] 推播目標回顧 freq=%s → %d 人", freq, len(targets))
+    for goal in targets:
         uid = goal["user_id"]
         push(uid, [
             TextMessage(text="該回顧目標進度啦 🎯"),
