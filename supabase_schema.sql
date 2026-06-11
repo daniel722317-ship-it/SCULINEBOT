@@ -74,7 +74,21 @@ create table if not exists habit_logs (
 );
 create index if not exists habit_logs_user_type_idx on habit_logs(user_id, type, recorded_at desc);
 
--- 5. 反思紀錄
+-- 5. 力量追蹤紀錄
+create table if not exists strength_logs (
+    id bigserial primary key,
+    user_id text not null,
+    exercise text not null,          -- 'squat' | 'bench' | 'deadlift' | 'ohp'
+    weight_kg numeric not null,
+    reps int not null,
+    one_rm numeric not null,         -- Brzycki 公式估算
+    recorded_at timestamptz default now()
+);
+create index if not exists strength_logs_user_ex_idx
+    on strength_logs(user_id, exercise, recorded_at desc);
+
+
+-- 6. 反思紀錄
 create table if not exists reflections (
     id bigserial primary key,
     user_id text not null,

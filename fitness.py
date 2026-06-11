@@ -24,7 +24,7 @@ import httpx
 import markdown
 from apscheduler.schedulers.background import BackgroundScheduler
 from bs4 import BeautifulSoup
-from flask import Flask, abort, request
+from flask import Flask, abort, request, send_from_directory
 from google import genai
 from supabase import Client, create_client
 
@@ -66,6 +66,10 @@ LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+# HF Space 自動注入；本機 dev 沒設就 fallback
+SPACE_HOST = os.getenv("SPACE_HOST", "daniel931101-sculinebot.hf.space")
+
+MUSCLE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "muscles")
 
 GEMINI_MODEL = "gemini-3.1-flash-lite"
 
@@ -311,6 +315,41 @@ def set_notify_pref(user_id: str, key: str, value: bool) -> None:
 
 
 @_sb_retry
+def log_strength(user_id: str, exercise: str, weight_kg: float, reps: int) -> dict:
+    """新增一筆力量紀錄。回傳含計算後 1RM 的列。"""
+    one_rm = round(calc_one_rm(weight_kg, reps), 1)
+    res = supabase.table("strength_logs").insert({
+        "user_id": user_id,
+        "exercise": exercise,
+        "weight_kg": weight_kg,
+        "reps": reps,
+        "one_rm": one_rm,
+    }).execute()
+    return res.data[0] if res.data else {"one_rm": one_rm}
+
+
+@_sb_retry
+def get_latest_strength(user_id: str, exercise: str) -> Optional[dict]:
+    res = (
+        supabase.table("strength_logs")
+        .select("*").eq("user_id", user_id).eq("exercise", exercise)
+        .order("recorded_at", desc=True).limit(1).execute()
+    )
+    return res.data[0] if res.data else None
+
+
+@_sb_retry
+def get_all_lifts_overview(user_id: str) -> dict:
+    """4 大主項各取最新一筆。"""
+    out = {}
+    for key in STRENGTH_LIFTS:
+        latest = get_latest_strength(user_id, key)
+        if latest:
+            out[key] = latest
+    return out
+
+
+@_sb_retry
 def users_with_notify_on(key: str) -> list[str]:
     """回傳該通知開著的所有 user_id。"""
     if key not in NOTIFY_KEYS:
@@ -382,6 +421,12 @@ def calc_macros(target_kcal: float, target_type: str) -> tuple[int, int, int]:
 def calc_daily_water_ml(weight_kg: float) -> int:
     """體重 x 37 ml（35-40 區間的中間值）。"""
     return int(weight_kg * 37)
+
+
+def calc_one_rm(weight_kg: float, reps: int) -> float:
+    """Brzycki 公式估算 1RM。reps 6-10 最準，>12 失準。"""
+    reps = max(1, min(reps, 12))
+    return weight_kg * (36 / (37 - reps))
 
 
 # ============================================================
@@ -1306,6 +1351,585 @@ def _notify_row(title: str, sched: str, color: str, is_on: bool, key: str) -> di
 
 
 # ============================================================
+# 5.5 體態 / 增肌專區資料 + Flex 卡
+# ============================================================
+
+# --- 動作百科 ---
+EXERCISES: dict[str, dict] = {
+    # === 背 ===
+    "bent_over_row_db": {
+        "title": "屈體划船", "equipment": "啞鈴", "muscle": "back",
+        "primary": ["闊背肌", "斜方肌中下"],
+        "steps": [
+            "雙手各持啞鈴，雙腳與肩同寬",
+            "屈髖向前，背部保持中立，胸口微微向前",
+            "手肘沿身體兩側往上拉，肩胛骨向後夾",
+            "頂峰停 1 秒，慢慢放下回起始位置",
+        ],
+        "mistakes": ["拱背或圓背（受傷高風險）", "用慣性甩動而非肌肉控制",
+                     "手肘外開太多（變成練後三角）"],
+        "tips": ["想像「夾筆」夾肩胛骨", "下放時保持張力", "重量適中即可，動作正確比重量重要"],
+    },
+    "kneeling_pulldown_band": {
+        "title": "跪姿下拉", "equipment": "彈力帶", "muscle": "back",
+        "primary": ["闊背肌"],
+        "steps": [
+            "把彈力帶固定在門框上方",
+            "跪姿，雙手寬握彈力帶兩端",
+            "肩胛下沉、夾向後下方，把帶子拉到胸口",
+            "慢慢回放，全程保持核心緊繃",
+        ],
+        "mistakes": ["用手臂發力（要靠背）", "聳肩", "身體前後晃動"],
+        "tips": ["先想著「肩胛下沉」再拉", "拉到胸口而非腹部"],
+    },
+    "deadlift_db": {
+        "title": "硬舉", "equipment": "啞鈴", "muscle": "back",
+        "primary": ["豎脊肌", "臀大肌", "膕繩肌"],
+        "steps": [
+            "啞鈴放在腳前，雙腳與肩同寬",
+            "屈髖屈膝下蹲抓握，背部打直",
+            "腳推地、髖前推站起，鎖定臀部",
+            "反向控制重量，緩慢放回地面",
+        ],
+        "mistakes": ["拱背（極易閃到腰）", "膝蓋過度前突", "啞鈴離身體太遠"],
+        "tips": ["啞鈴貼著腿走", "「推地板」而非「拉起重量」", "先學徒手髖鉸鏈再加重"],
+    },
+    "one_arm_row_db": {
+        "title": "單臂划船", "equipment": "啞鈴", "muscle": "back",
+        "primary": ["闊背肌", "斜方肌"],
+        "steps": [
+            "單膝跪椅，同側手撐椅面",
+            "另一手持啞鈴，手臂自然下垂",
+            "手肘沿身體往後上方拉，肩胛收緊",
+            "頂峰停 1 秒，控制下放",
+        ],
+        "mistakes": ["軀幹旋轉借力", "手肘外開", "肩膀聳起"],
+        "tips": ["啞鈴貼著大腿往後拉", "想像「鋸樹」的動作軌跡"],
+    },
+    "reverse_fly_db": {
+        "title": "反向飛鳥", "equipment": "啞鈴", "muscle": "back",
+        "primary": ["後三角肌", "斜方肌中下"],
+        "steps": [
+            "雙手持輕啞鈴，屈髖向前",
+            "手臂微彎，向兩側畫弧線抬起",
+            "頂峰肩胛夾緊，停 1-2 秒",
+            "緩慢回放，控制離心",
+        ],
+        "mistakes": ["重量太重變甩動", "手臂打太直", "背部沒打直"],
+        "tips": ["重量寧輕勿重", "想像「擁抱大樹」反向動作"],
+    },
+
+    # === 胸 ===
+    "bench_press_bb": {
+        "title": "槓鈴臥推", "equipment": "槓鈴", "muscle": "chest",
+        "primary": ["胸大肌", "三角肌前束", "三頭肌"],
+        "steps": [
+            "仰躺長凳，雙腳穩踩地面",
+            "肩胛下沉後收，雙手約比肩稍寬握槓",
+            "槓鈴下放至胸口下緣（約乳頭線）",
+            "推回起始位置，注意手肘不打死鎖",
+        ],
+        "mistakes": ["手腕折太多", "屁股離凳", "槓鈴下放位置太高（傷肩）"],
+        "tips": ["「肩胛先收再推」", "新手務必有保護者或史密斯架"],
+    },
+    "incline_press_db": {
+        "title": "啞鈴上斜推", "equipment": "啞鈴", "muscle": "chest",
+        "primary": ["胸大肌上束", "三角肌前束"],
+        "steps": [
+            "椅背調 30-45 度",
+            "雙手持啞鈴於胸口兩側",
+            "推到頂端時雙手稍向內靠（但不碰）",
+            "控制下放到胸口側邊",
+        ],
+        "mistakes": ["椅背角度過陡（變成練肩）", "兩個啞鈴互相碰撞", "下放太低肩膀痛"],
+        "tips": ["角度愈大、愈練上胸但肩膀壓力愈大", "30 度是新手甜蜜點"],
+    },
+    "fly_db": {
+        "title": "啞鈴飛鳥", "equipment": "啞鈴", "muscle": "chest",
+        "primary": ["胸大肌"],
+        "steps": [
+            "仰躺，雙手持啞鈴於胸上方，掌心相對",
+            "手肘微彎、向兩側畫弧下放",
+            "感受胸肌伸展，到大臂與地面平行",
+            "用胸肌「夾」回頂端",
+        ],
+        "mistakes": ["手肘打太直（變成練肩）", "重量太重", "下放太深拉到肩膀"],
+        "tips": ["想像抱大樹的動作", "重量寧輕勿重"],
+    },
+    "pushup_bw": {
+        "title": "伏地挺身", "equipment": "徒手", "muscle": "chest",
+        "primary": ["胸大肌", "三頭肌", "核心"],
+        "steps": [
+            "雙手撐地，比肩稍寬",
+            "身體成一直線（從頭到腳跟）",
+            "緩慢下放至胸口離地約一個拳頭",
+            "推回起始位置，全程保持核心緊繃",
+        ],
+        "mistakes": ["腰下塌", "屁股翹高", "下放幅度不夠"],
+        "tips": ["不行就跪姿做", "下放比推回慢 1 倍效果加倍"],
+    },
+    "decline_pushup_bw": {
+        "title": "下斜伏地挺身", "equipment": "徒手", "muscle": "chest",
+        "primary": ["胸大肌上束", "三角肌前束"],
+        "steps": [
+            "雙腳放在凳子或椅子上",
+            "雙手撐地，身體呈一直線",
+            "緩慢下放，胸口貼近地面",
+            "推回起始位置",
+        ],
+        "mistakes": ["重心過度前傾傷手腕", "腰塌下"],
+        "tips": ["腳放愈高、上胸刺激愈強", "新手先掌握平地版本"],
+    },
+
+    # === 肩 ===
+    "ohp_db": {
+        "title": "啞鈴肩推", "equipment": "啞鈴", "muscle": "shoulders",
+        "primary": ["三角肌前束/中束", "三頭肌"],
+        "steps": [
+            "坐姿或站姿，雙手持啞鈴於肩膀兩側",
+            "掌心朝前，手肘略低於肩膀",
+            "推至頭頂上方，但不打死鎖",
+            "控制下放回起始位置",
+        ],
+        "mistakes": ["腰背過度後仰", "推到手肘鎖死", "重量太重變借力"],
+        "tips": ["核心鎖住保護腰", "感覺像「推天花板」"],
+    },
+    "lateral_raise_db": {
+        "title": "側平舉", "equipment": "啞鈴", "muscle": "shoulders",
+        "primary": ["三角肌中束"],
+        "steps": [
+            "站姿，雙手持輕啞鈴於身側",
+            "手肘略彎，向兩側畫弧抬起",
+            "抬到手臂與地面平行（不超過肩高）",
+            "慢慢放下回起始位置",
+        ],
+        "mistakes": ["重量太重用甩的", "聳肩", "手肘打太直"],
+        "tips": ["小拇指略高於大拇指 = 三角肌中束發力", "肩膀痛就是太重了"],
+    },
+    "front_raise_db": {
+        "title": "前平舉", "equipment": "啞鈴", "muscle": "shoulders",
+        "primary": ["三角肌前束"],
+        "steps": [
+            "站姿，雙手持啞鈴於大腿前方",
+            "手臂打直或微彎，向前抬起",
+            "抬到肩膀高度即可，不要過頭",
+            "慢慢放下回起始位置",
+        ],
+        "mistakes": ["腰部後仰", "抬太高（變斜方肌）"],
+        "tips": ["輕重量、慢動作效果最好"],
+    },
+    "rear_delt_fly_db": {
+        "title": "反向飛鳥", "equipment": "啞鈴", "muscle": "shoulders",
+        "primary": ["後三角肌"],
+        "steps": [
+            "屈髖向前，背部打直",
+            "雙手持輕啞鈴於下方",
+            "向兩側畫弧抬起，肩胛微收",
+            "頂峰停 1 秒，控制下放",
+        ],
+        "mistakes": ["重量太重變甩動", "背駝"],
+        "tips": ["後三角肌是新手最常忽略的部位", "輕重量就有感"],
+    },
+    "upright_row_db": {
+        "title": "直立划船", "equipment": "啞鈴", "muscle": "shoulders",
+        "primary": ["三角肌", "斜方肌"],
+        "steps": [
+            "站姿，雙手持啞鈴於身體前方",
+            "手肘領先向上拉到胸口高度",
+            "頂峰肩胛微收",
+            "緩慢下放",
+        ],
+        "mistakes": ["拉太高（肩膀夾擠）", "用手腕拉而非手肘"],
+        "tips": ["手肘高於手腕", "肩膀痛立刻停"],
+    },
+
+    # === 腿 ===
+    "squat_bb": {
+        "title": "槓鈴深蹲", "equipment": "槓鈴", "muscle": "legs",
+        "primary": ["股四頭肌", "臀大肌", "膕繩肌", "核心"],
+        "steps": [
+            "槓鈴放於上背（不是脖子）",
+            "雙腳與肩同寬、腳尖略外八",
+            "屈髖屈膝下蹲，至大腿與地面平行",
+            "腳推地站起，膝蓋對齊腳尖",
+        ],
+        "mistakes": ["膝蓋內夾", "重心前傾（變早安式）", "下蹲深度不夠"],
+        "tips": ["每組前先做暖身組", "新手務必用深蹲架", "想著「坐椅子」"],
+    },
+    "rdl_db": {
+        "title": "羅馬尼亞硬舉", "equipment": "啞鈴", "muscle": "legs",
+        "primary": ["膕繩肌", "臀大肌"],
+        "steps": [
+            "站姿，雙手持啞鈴於大腿前方",
+            "膝蓋微彎、屈髖向前",
+            "啞鈴貼著腿往下滑，感覺膕繩肌伸展",
+            "髖前推站起，鎖定臀部",
+        ],
+        "mistakes": ["拱背（最危險錯誤）", "膝蓋過度彎曲（變成深蹲）"],
+        "tips": ["核心鎖住、背部保持中立", "練「屈髖」不是「彎腰」"],
+    },
+    "lunge_db": {
+        "title": "弓箭步", "equipment": "啞鈴", "muscle": "legs",
+        "primary": ["股四頭肌", "臀大肌"],
+        "steps": [
+            "站姿，雙手持啞鈴於身側",
+            "一腳向前跨大步",
+            "下蹲至前膝 90 度，後膝接近地面",
+            "前腳推地回起始，換邊",
+        ],
+        "mistakes": ["前膝超過腳尖太多", "身體前傾", "步距太小"],
+        "tips": ["前腳跟發力", "上半身保持直立"],
+    },
+    "bulgarian_split_db": {
+        "title": "保加利亞分腿蹲", "equipment": "啞鈴", "muscle": "legs",
+        "primary": ["股四頭肌", "臀大肌"],
+        "steps": [
+            "後腳放椅面，前腳向前一大步",
+            "雙手持啞鈴於身側",
+            "下蹲至前膝 90 度",
+            "前腳推地站起",
+        ],
+        "mistakes": ["前腳離椅子太近（膝蓋壓力大）", "重心後傾"],
+        "tips": ["前腳跨遠一點", "新手不加重量先抓平衡"],
+    },
+    "calf_raise_bw": {
+        "title": "提踵", "equipment": "徒手", "muscle": "legs",
+        "primary": ["小腿肌"],
+        "steps": [
+            "站在台階邊緣，腳跟懸空",
+            "緩慢踮起腳尖到最高",
+            "頂峰停 1-2 秒",
+            "緩慢下放至腳跟低於台階",
+        ],
+        "mistakes": ["速度太快", "上下幅度不夠"],
+        "tips": ["全程感受小腿肌伸展", "可以加負重變化"],
+    },
+
+    # === 手臂 ===
+    "bicep_curl_db": {
+        "title": "二頭肌彎舉", "equipment": "啞鈴", "muscle": "arms",
+        "primary": ["二頭肌"],
+        "steps": [
+            "站姿，雙手持啞鈴於身側",
+            "手肘貼身體，前臂往上彎",
+            "頂峰停 1 秒、二頭擠壓",
+            "緩慢下放至手臂完全伸直",
+        ],
+        "mistakes": ["手肘前後晃動", "用腰部借力", "下放沒到底"],
+        "tips": ["想著「手肘是支點」", "下放比上舉慢一倍"],
+    },
+    "tricep_kickback_db": {
+        "title": "三頭肌後屈伸", "equipment": "啞鈴", "muscle": "arms",
+        "primary": ["三頭肌"],
+        "steps": [
+            "屈髖向前，手肘抬高貼身體",
+            "前臂往後伸展至手臂打直",
+            "頂峰停 1 秒",
+            "緩慢回到起始位置",
+        ],
+        "mistakes": ["手肘下垂", "上臂晃動"],
+        "tips": ["上臂保持不動，只動前臂", "輕重量、慢動作"],
+    },
+    "hammer_curl_db": {
+        "title": "錘式彎舉", "equipment": "啞鈴", "muscle": "arms",
+        "primary": ["肱橈肌", "二頭肌"],
+        "steps": [
+            "站姿，雙手持啞鈴，掌心相對",
+            "保持掌心向內不旋轉",
+            "上彎至胸口高度",
+            "緩慢下放",
+        ],
+        "mistakes": ["途中手腕旋轉（變一般彎舉）", "用腰部借力"],
+        "tips": ["練前臂粗大就靠這個", "可單手交替做"],
+    },
+    "tricep_pushdown_band": {
+        "title": "三頭下壓", "equipment": "彈力帶", "muscle": "arms",
+        "primary": ["三頭肌"],
+        "steps": [
+            "彈力帶固定在頭頂上方",
+            "雙手抓帶兩端，手肘貼身體",
+            "前臂往下壓直至手臂打直",
+            "緩慢回起始位置",
+        ],
+        "mistakes": ["手肘前後移動", "用身體重心壓"],
+        "tips": ["手肘像「鉸鏈」固定不動"],
+    },
+    "concentration_curl_db": {
+        "title": "集中彎舉", "equipment": "啞鈴", "muscle": "arms",
+        "primary": ["二頭肌"],
+        "steps": [
+            "坐姿，手肘抵在同側大腿內側",
+            "另一手持啞鈴，前臂下垂",
+            "緩慢上彎至頂峰",
+            "頂峰停 1 秒、緩慢下放",
+        ],
+        "mistakes": ["用身體晃動", "手肘離開大腿"],
+        "tips": ["這個動作沒得借力，最能孤立二頭"],
+    },
+}
+
+# --- 訓練菜單 ---
+WORKOUT_MENUS: dict[str, dict] = {
+    "back": {
+        "title": "背部鍛鍊", "img": "back", "color": "#3B82F6", "icon": "🔵",
+        "items": [
+            ("bent_over_row_db",      4,  8),
+            ("kneeling_pulldown_band", 4, 8),
+            ("deadlift_db",           4,  8),
+            ("one_arm_row_db",        3, 10),
+            ("reverse_fly_db",        3, 12),
+        ],
+    },
+    "chest": {
+        "title": "胸肌鍛鍊", "img": "chest", "color": "#3B82F6", "icon": "🔵",
+        "items": [
+            ("bench_press_bb",   4,  8),
+            ("incline_press_db", 4,  8),
+            ("fly_db",           3, 12),
+            ("pushup_bw",        3, 15),
+            ("decline_pushup_bw", 3, 10),
+        ],
+    },
+    "shoulders": {
+        "title": "肩膀鍛鍊", "img": "shoulders", "color": "#3B82F6", "icon": "🔵",
+        "items": [
+            ("ohp_db",            4,  8),
+            ("lateral_raise_db",  4, 12),
+            ("front_raise_db",    3, 12),
+            ("rear_delt_fly_db",  3, 12),
+            ("upright_row_db",    3, 10),
+        ],
+    },
+    "legs": {
+        "title": "腿部訓練", "img": "legs", "color": "#3B82F6", "icon": "🔵",
+        "items": [
+            ("squat_bb",            4,  8),
+            ("rdl_db",              4,  8),
+            ("lunge_db",            3, 10),
+            ("bulgarian_split_db",  3, 10),
+            ("calf_raise_bw",       3, 20),
+        ],
+    },
+    "arms": {
+        "title": "手臂塑形", "img": "arms", "color": "#3B82F6", "icon": "🔵",
+        "items": [
+            ("bicep_curl_db",         4, 10),
+            ("tricep_kickback_db",    4, 10),
+            ("hammer_curl_db",        3, 12),
+            ("tricep_pushdown_band",  3, 12),
+            ("concentration_curl_db", 3, 12),
+        ],
+    },
+}
+
+
+def _muscle_img_url(img_key: str) -> str:
+    return f"https://{SPACE_HOST}/muscles/{img_key}.png"
+
+
+def training_menu_flex() -> FlexMessage:
+    """5 套訓練菜單 Carousel。"""
+    return _flex("訓練菜單庫", {
+        "type": "carousel",
+        "contents": [_training_card(k, v) for k, v in WORKOUT_MENUS.items()],
+    })
+
+
+def _training_card(menu_key: str, menu: dict) -> dict:
+    items = menu["items"]
+    item_rows = []
+    for ex_id, sets, reps in items:
+        ex = EXERCISES[ex_id]
+        item_rows.append({
+            "type": "box", "layout": "horizontal", "spacing": "sm",
+            "contents": [
+                {"type": "text",
+                 "text": f"{ex['title']}・{ex['equipment']}",
+                 "size": "sm", "flex": 7, "wrap": True, "color": C_TEXT_DARK},
+                {"type": "text", "text": f"{sets}×{reps}",
+                 "size": "sm", "flex": 2, "align": "end",
+                 "weight": "bold", "color": menu["color"]},
+            ],
+        })
+
+    return {
+        "type": "bubble",
+        "size": "kilo",
+        "hero": {
+            "type": "image",
+            "url": _muscle_img_url(menu["img"]),
+            "size": "full",
+            "aspectRatio": "4:3",
+            "aspectMode": "cover",
+            "backgroundColor": "#F5F5F5",
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "sm", "paddingAll": "16px",
+            "contents": [
+                {"type": "text", "text": menu["title"],
+                 "weight": "bold", "size": "xl", "color": C_TEXT_DARK},
+                {"type": "text", "text": f"{len(items)} 個動作",
+                 "size": "xs", "color": C_TEXT_SOFT, "margin": "xs"},
+                {"type": "separator", "color": C_DIVIDER, "margin": "md"},
+                {"type": "box", "layout": "vertical", "spacing": "sm", "margin": "md",
+                 "contents": item_rows},
+            ],
+        },
+        "footer": {
+            "type": "box", "layout": "vertical", "spacing": "sm", "paddingAll": "12px",
+            "contents": [
+                {"type": "button", "style": "primary", "color": C_PRIMARY, "height": "sm",
+                 "action": {"type": "message", "label": "💪 開始打卡",
+                            "text": "運動打卡"}},
+                {"type": "button", "style": "link", "height": "sm",
+                 "action": {"type": "postback", "label": "📖 動作詳解",
+                            "data": f"action=menu_detail&key={menu_key}",
+                            "displayText": f"看 {menu['title']} 動作詳解"}},
+            ],
+        },
+    }
+
+
+def exercise_detail_flex(ex_id: str) -> FlexMessage:
+    ex = EXERCISES[ex_id]
+    color = "#3B82F6"
+
+    primary_text = "・".join(ex.get("primary", []))
+
+    def _block(title: str, items: list, emoji: str) -> list:
+        rows = [{
+            "type": "text", "text": f"{emoji} {title}",
+            "weight": "bold", "size": "sm", "color": color, "margin": "md",
+        }]
+        for i, it in enumerate(items, 1):
+            rows.append({
+                "type": "text", "text": f"{i}. {it}",
+                "wrap": True, "size": "xs", "color": C_TEXT_DARK,
+                "margin": "xs",
+            })
+        return rows
+
+    body_contents = [
+        {"type": "box", "layout": "horizontal",
+         "contents": [
+             {"type": "text", "text": "🎯 目標肌群",
+              "size": "xs", "flex": 2, "color": C_TEXT_SOFT, "weight": "bold"},
+             {"type": "text", "text": primary_text,
+              "size": "xs", "flex": 4, "color": C_TEXT_DARK,
+              "align": "end", "wrap": True},
+         ]},
+        {"type": "box", "layout": "horizontal", "margin": "sm",
+         "contents": [
+             {"type": "text", "text": "🛠️ 器材",
+              "size": "xs", "flex": 2, "color": C_TEXT_SOFT, "weight": "bold"},
+             {"type": "text", "text": ex["equipment"],
+              "size": "xs", "flex": 4, "color": C_TEXT_DARK, "align": "end"},
+         ]},
+        {"type": "separator", "color": C_DIVIDER, "margin": "md"},
+        *_block("動作步驟", ex["steps"], "📋"),
+        *_block("常見錯誤", ex["mistakes"], "⚠️"),
+        *_block("小提示", ex["tips"], "💡"),
+    ]
+
+    return _flex(ex["title"], {
+        "type": "bubble", "size": "mega",
+        "header": {
+            "type": "box", "layout": "vertical", "backgroundColor": color,
+            "paddingAll": "20px", "spacing": "xs",
+            "contents": [
+                {"type": "text", "text": f"📖 {ex['title']}",
+                 "color": "#FFFFFF", "weight": "bold", "size": "xl"},
+                {"type": "text", "text": f"{ex['equipment']} · {EXERCISES[ex_id].get('muscle','')}",
+                 "color": "#FFFFFF", "size": "sm", "margin": "sm"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "xs", "paddingAll": "16px",
+            "contents": body_contents,
+        },
+    })
+
+
+def menu_detail_carousel_flex(menu_key: str) -> FlexMessage:
+    """某個訓練菜單裡所有動作的詳解 Carousel。"""
+    menu = WORKOUT_MENUS[menu_key]
+    cards = []
+    for ex_id, _, _ in menu["items"]:
+        card_msg = exercise_detail_flex(ex_id)
+        # 取出 bubble dict
+        cards.append(json.loads(card_msg.contents.to_json()))
+    return _flex(f"{menu['title']} 動作詳解", {
+        "type": "carousel", "contents": cards,
+    })
+
+
+# --- 力量追蹤 Flex ---
+
+STRENGTH_LIFTS = {
+    "squat":    ("squat", "🏋️ 深蹲",    C_PRIMARY),
+    "bench":    ("bench", "💪 臥推",    "#3B82F6"),
+    "deadlift": ("deadlift", "🦴 硬舉", COLOR_GOAL),
+    "ohp":      ("ohp", "🙌 肩推",      C_ACCENT),
+}
+
+
+def strength_overview_flex(records: dict) -> FlexMessage:
+    """4 大主項力量總覽。records: {lift_key: {one_rm, weight, reps, recorded_at}}"""
+    rows = []
+    for key, (_, label, color) in STRENGTH_LIFTS.items():
+        r = records.get(key)
+        if r:
+            val = f"{r['one_rm']:.0f} kg"
+            sub = f"最近：{int(r['weight_kg'])}kg × {r['reps']}"
+        else:
+            val = "—"
+            sub = "尚未紀錄"
+        rows.append({
+            "type": "box", "layout": "vertical", "spacing": "xs",
+            "contents": [
+                {"type": "box", "layout": "horizontal",
+                 "contents": [
+                     {"type": "text", "text": label, "size": "sm",
+                      "weight": "bold", "color": C_TEXT_DARK, "flex": 3},
+                     {"type": "text", "text": val, "size": "lg",
+                      "weight": "bold", "color": color,
+                      "flex": 3, "align": "end"},
+                 ]},
+                {"type": "text", "text": sub, "size": "xs",
+                 "color": C_TEXT_SOFT, "margin": "xs"},
+            ],
+        })
+        rows.append({"type": "separator", "color": C_DIVIDER})
+    rows = rows[:-1]
+
+    return _flex("我的力量", {
+        "type": "bubble", "size": "mega",
+        "header": {
+            "type": "box", "layout": "vertical", "backgroundColor": C_PRIMARY,
+            "paddingAll": "20px", "spacing": "xs",
+            "contents": [
+                {"type": "text", "text": "💪 我的力量",
+                 "color": "#FFFFFF", "weight": "bold", "size": "xl"},
+                {"type": "text", "text": "估算 1RM（Brzycki 公式）",
+                 "color": "#FFFFFF", "size": "sm", "margin": "sm"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "lg", "paddingAll": "16px",
+            "contents": rows,
+        },
+        "footer": {
+            "type": "box", "layout": "vertical", "paddingAll": "12px",
+            "contents": [
+                {"type": "button", "style": "primary", "color": C_PRIMARY, "height": "sm",
+                 "action": {"type": "message", "label": "✏️ 紀錄新一筆",
+                            "text": "力量紀錄"}},
+            ],
+        },
+    })
+
+
+# ============================================================
 # 6. Quick Reply 與選單工具
 # ============================================================
 
@@ -1707,10 +2331,17 @@ def body_composition_menu(reply_token: str) -> None:
     )
 
 
-def bulk_section_placeholder(reply_token: str) -> None:
+def bulk_section_menu(reply_token: str) -> None:
+    """增肌主選單：訓練菜單 / 動作圖書館 / 力量追蹤。"""
     reply_text(
         reply_token,
-        "🔥 增肌專區建置中⋯\n敬請期待 ✨",
+        "🔥 增肌專區 — 想看什麼？",
+        qr(
+            ("📋 訓練菜單", "訓練菜單"),
+            ("📖 動作圖書館", "動作圖書館"),
+            ("💪 我的力量", "我的力量"),
+            ("✏️ 力量紀錄", "力量紀錄"),
+        ),
     )
 
 
@@ -1719,6 +2350,122 @@ def cut_section_placeholder(reply_token: str) -> None:
         reply_token,
         "✂️ 減脂專區建置中⋯\n敬請期待 ✨",
     )
+
+
+def show_training_menus(reply_token: str) -> None:
+    reply(reply_token, [training_menu_flex()])
+
+
+def exercise_library_menu(reply_token: str) -> None:
+    reply_text(
+        reply_token,
+        "📖 動作圖書館 — 想看哪個部位？",
+        qr(
+            ("背", "動作圖書館 背"),
+            ("胸", "動作圖書館 胸"),
+            ("肩", "動作圖書館 肩"),
+            ("腿", "動作圖書館 腿"),
+            ("手臂", "動作圖書館 手臂"),
+        ),
+    )
+
+
+_MUSCLE_ZH_TO_KEY = {
+    "背": "back", "胸": "chest", "肩": "shoulders",
+    "腿": "legs", "手臂": "arms",
+}
+
+
+def show_exercises_by_muscle(muscle_zh: str, reply_token: str) -> None:
+    key = _MUSCLE_ZH_TO_KEY.get(muscle_zh)
+    if not key:
+        reply_text(reply_token, "找不到這個部位 🤔")
+        return
+    # 從 WORKOUT_MENUS 拿該部位的動作清單
+    menu = WORKOUT_MENUS.get(key)
+    if not menu:
+        reply_text(reply_token, "目前沒有這個部位的動作。")
+        return
+    # 顯示 carousel：該部位所有動作詳解
+    reply(reply_token, [menu_detail_carousel_flex(key)])
+
+
+def show_strength_overview(user_id: str, reply_token: str) -> None:
+    profile = get_profile(user_id)
+    if not profile:
+        reply_text(reply_token, "請先輸入「個人資料」建立檔案 🙏")
+        return
+    records = get_all_lifts_overview(user_id)
+    reply(reply_token, [strength_overview_flex(records)])
+
+
+def start_strength_log(user_id: str, reply_token: str) -> None:
+    """力量紀錄精靈：選動作 → 重量 → 次數。"""
+    set_state(user_id, "strength_log", "exercise", {})
+    reply_text(
+        reply_token,
+        "💪 紀錄哪個動作？",
+        qr(
+            ("🏋️ 深蹲", "深蹲"),
+            ("💪 臥推", "臥推"),
+            ("🦴 硬舉", "硬舉"),
+            ("🙌 肩推", "肩推"),
+        ),
+    )
+
+
+_STRENGTH_LIFT_ZH = {
+    "深蹲": "squat", "臥推": "bench",
+    "硬舉": "deadlift", "肩推": "ohp",
+}
+
+
+def handle_strength_log(user_id: str, text: str, reply_token: str, state: dict) -> None:
+    step = state["step"]
+    data = state["data"] or {}
+
+    if step == "exercise":
+        ex_key = _STRENGTH_LIFT_ZH.get(text)
+        if not ex_key:
+            reply_text(reply_token, "請選四大主項其中一個",
+                       qr(("🏋️ 深蹲", "深蹲"), ("💪 臥推", "臥推"),
+                          ("🦴 硬舉", "硬舉"), ("🙌 肩推", "肩推")))
+            return
+        data["exercise"] = ex_key
+        data["exercise_zh"] = text
+        set_state(user_id, "strength_log", "weight", data)
+        reply_text(reply_token, f"{text} 多少公斤？（直接打數字）")
+        return
+
+    if step == "weight":
+        try:
+            data["weight"] = float(text)
+        except ValueError:
+            reply_text(reply_token, "請打數字，例如 80")
+            return
+        set_state(user_id, "strength_log", "reps", data)
+        reply_text(reply_token, "做了幾下？（直接打數字）")
+        return
+
+    if step == "reps":
+        try:
+            reps = int(text)
+        except ValueError:
+            reply_text(reply_token, "請打數字，例如 5")
+            return
+        if reps < 1 or reps > 20:
+            reply_text(reply_token, "次數請填 1-20 之間。")
+            return
+        rec = log_strength(user_id, data["exercise"], data["weight"], reps)
+        clear_state(user_id)
+        one_rm = rec.get("one_rm", calc_one_rm(data["weight"], reps))
+        reply_text(
+            reply_token,
+            f"✅ 已紀錄 {data['exercise_zh']} {int(data['weight'])}kg × {reps}\n\n"
+            f"💪 估算 1RM：**{one_rm:.0f} kg**\n\n"
+            "輸入「我的力量」看 4 大主項總覽。",
+        )
+        return
 
 
 def calendar_section_placeholder(reply_token: str) -> None:
@@ -2052,6 +2799,9 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
         if flow == "wipe_all":
             handle_wipe_confirm(user_id, text, reply_token)
             return
+        if flow == "strength_log":
+            handle_strength_log(user_id, text, reply_token, state)
+            return
 
     # 3) 沒有狀態 → 走頂層指令
     # 個人資料
@@ -2101,7 +2851,24 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
         body_composition_menu(reply_token)
         return
     if text in ("增肌", "🔥 增肌", "增肌專區"):
-        bulk_section_placeholder(reply_token)
+        bulk_section_menu(reply_token)
+        return
+    if text in ("訓練菜單", "📋 訓練菜單", "課表"):
+        show_training_menus(reply_token)
+        return
+    if text in ("動作圖書館", "📖 動作圖書館", "動作百科"):
+        exercise_library_menu(reply_token)
+        return
+    # 部位查詢
+    if text.startswith("動作圖書館 "):
+        muscle_zh = text.replace("動作圖書館 ", "", 1).strip()
+        show_exercises_by_muscle(muscle_zh, reply_token)
+        return
+    if text in ("我的力量", "💪 我的力量", "力量總覽"):
+        show_strength_overview(user_id, reply_token)
+        return
+    if text in ("力量紀錄", "✏️ 力量紀錄", "紀錄力量"):
+        start_strength_log(user_id, reply_token)
         return
     if text in ("減脂", "✂️ 減脂", "減脂專區"):
         cut_section_placeholder(reply_token)
@@ -2238,6 +3005,14 @@ def handle_postback(event):
                 "user_id", user_id).eq("status", "active").execute()
             reply_text(reply_token,
                        "🎉 恭喜完成目標！要不要設下一個？輸入「新目標」開始。")
+            return
+
+        if action == "menu_detail":
+            menu_key = params.get("key", "")
+            if menu_key not in WORKOUT_MENUS:
+                reply_text(reply_token, "找不到這個菜單 🤔")
+                return
+            reply(reply_token, [menu_detail_carousel_flex(menu_key)])
             return
 
         if action == "notify_toggle":
@@ -2378,6 +3153,12 @@ def init_scheduler():
 @app.route("/", methods=["GET"])
 def home():
     return {"message": "Fitness LINE Bot is running", "status": "ok"}
+
+
+@app.route("/muscles/<path:filename>")
+def serve_muscle(filename):
+    """提供肌肉剪影 PNG 給 Flex Message 用。"""
+    return send_from_directory(MUSCLE_DIR, filename)
 
 
 @app.route("/", methods=["POST"])
