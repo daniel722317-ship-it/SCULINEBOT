@@ -1683,13 +1683,14 @@ def show_sleep_card(reply_token: str) -> None:
 
 
 def checkin_menu(reply_token: str) -> None:
-    """打卡子選單：運動 / 睡眠。"""
+    """打卡子選單：運動 / 睡眠 / 飲水。"""
     reply_text(
         reply_token,
         "✅ 想打哪一張卡？",
         qr(
             ("💪 運動打卡", "運動打卡"),
             ("🌙 睡眠打卡", "睡眠打卡"),
+            ("💧 飲水打卡", "飲水打卡"),
         ),
     )
 
@@ -1699,6 +1700,14 @@ def fitness_section_placeholder(reply_token: str) -> None:
     reply_text(
         reply_token,
         "🏋️ 健身專區建置中⋯\n敬請期待 ✨\n\n暫時可用「打卡」紀錄今天的運動分鐘。",
+    )
+
+
+def calendar_section_placeholder(reply_token: str) -> None:
+    """日曆區（內容建置中）。"""
+    reply_text(
+        reply_token,
+        "📅 日曆功能建置中⋯\n敬請期待 ✨",
     )
 
 
@@ -2064,7 +2073,7 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
     if text in ("運動打卡", "💪 運動打卡"):
         start_workout_log(user_id, reply_token)
         return
-    if text in ("飲水", "💧 飲水", "飲水紀錄"):
+    if text in ("飲水", "💧 飲水", "飲水紀錄", "飲水打卡", "💧 飲水打卡"):
         show_water_card(user_id, reply_token)
         return
     if text in ("睡眠紀錄", "🌙 睡眠紀錄", "睡眠", "睡眠打卡", "🌙 睡眠打卡"):
@@ -2072,6 +2081,9 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
         return
     if text in ("健身", "🏋️ 健身", "健身專區"):
         fitness_section_placeholder(reply_token)
+        return
+    if text in ("日曆", "📅 日曆", "行事曆"):
+        calendar_section_placeholder(reply_token)
         return
     if text in ("反思", "📝 反思"):
         start_reflection(user_id, reply_token)
@@ -2094,7 +2106,7 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
         return
 
     # 功能設定 / 刪除
-    if text in ("功能設定", "⚙️ 功能設定", "刪除", "刪除資料"):
+    if text in ("功能設定", "⚙️ 功能設定", "設定", "⚙️ 設定", "刪除", "刪除資料"):
         data_mgmt_menu(reply_token)
         return
     if text in ("通知設定", "🔔 通知設定", "推播設定"):
