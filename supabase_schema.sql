@@ -23,10 +23,14 @@ create table if not exists profiles (
     eating_style text,               -- 'outside' | 'home'
     workout_time text,               -- 'morning' | 'afternoon' | 'evening'
     daily_water_ml int,
-    notify_sleep boolean default true,    -- 早安睡眠回顧推播
-    notify_water boolean default true,    -- 飲水提醒推播
-    notify_stretch boolean default true,  -- 久坐伸展推播
-    notify_goal boolean default true,     -- 目標回顧推播
+    -- 簡易模式（預設開）：兩則合併推播
+    notify_morning boolean default true,    -- 每日早報 09:00
+    notify_evening boolean default true,    -- 晚安回顧 21:00
+    -- 進階模式（預設關，使用者手動開）：原本的分時段推播
+    notify_sleep boolean default false,     -- 早安睡眠回顧 07:30
+    notify_water boolean default false,     -- 飲水提醒 9/12/15/18
+    notify_stretch boolean default false,   -- 久坐伸展 週一-五 11/14/16
+    notify_goal boolean default false,      -- 目標回顧 21:30 / 週日 20:00
     created_at timestamptz default now(),
     updated_at timestamptz default now()
 );

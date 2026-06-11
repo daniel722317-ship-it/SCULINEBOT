@@ -284,7 +284,9 @@ def abandon_active_goals(user_id: str) -> int:
     return len(res.data or [])
 
 
-NOTIFY_KEYS = ("sleep", "water", "stretch", "goal")
+NOTIFY_KEYS = ("morning", "evening", "sleep", "water", "stretch", "goal")
+NOTIFY_SIMPLE_KEYS = ("morning", "evening")
+NOTIFY_ADVANCED_KEYS = ("sleep", "water", "stretch", "goal")
 
 
 def get_notify_prefs(user_id: str) -> dict:
@@ -504,7 +506,7 @@ def main_menu_flex() -> FlexMessage:
             _menu_card("🎯", "目標設定", "用 SMART 框架設目標", COLOR_GOAL, "開始設目標", "目標設定"),
             _menu_card("🌱", "自我成長", "運動 / 飲水 / 睡眠 / 反思", COLOR_HABIT, "進入", "自我成長"),
             _menu_card("🥗", "飲食與健康", "TDEE / 菜單 / 運動點心", COLOR_DIET, "進入", "飲食與健康"),
-            _menu_card("⚙️", "資料管理", "撤銷紀錄 / 重設 / 刪除", COLOR_MGMT, "進入", "資料管理"),
+            _menu_card("⚙️", "資料管理", "🔔 通知 / 撤銷 / 重設 / 刪除", COLOR_MGMT, "進入", "資料管理"),
         ],
     }
     return _flex("主選單", body)
@@ -1013,22 +1015,42 @@ def today_progress_flex(profile: dict, water_ml: int, water_target: int,
     return _flex("今日進度", body)
 
 
-NOTIFY_META = {
-    "sleep":   ("🌙 早安睡眠回顧", "每日 07:30",                COLOR_SLEEP),
-    "water":   ("💧 飲水提醒",     "每日 09 / 12 / 15 / 18",     COLOR_WATER),
-    "stretch": ("🪑 久坐伸展",     "週一-五 11 / 14 / 16",       COLOR_STRETCH),
-    "goal":    ("🎯 目標回顧",     "每日 21:00 / 週日 20:00",    COLOR_GOAL),
-}
+def daily_briefing_flex(profile: dict, water_target: int,
+                        sleep_recent: Optional[dict],
+                        goal: Optional[dict]) -> FlexMessage:
+    """每日早報（09:00）：早安 + 昨晚睡眠 + 飲水目標 + 目標倒數 + 一句話。"""
+    today_str = date.today().strftime("%m/%d (%a)")
 
+    sleep_label = "尚未紀錄"
+    if sleep_recent:
+        q = sleep_recent.get("quality", "")
+        sleep_label = {"good": "😴 睡得好", "normal": "😐 還可以",
+                       "bad": "😣 沒睡好"}.get(q, "已紀錄")
 
-def notify_settings_flex(prefs: dict) -> FlexMessage:
-    rows = []
-    for key in NOTIFY_KEYS:
-        title, sched, color = NOTIFY_META[key]
-        is_on = bool(prefs.get(key, True))
-        rows.append(_notify_row(title, sched, color, is_on, key))
-        rows.append({"type": "separator", "color": C_DIVIDER})
-    rows = rows[:-1]  # 去掉最後一條 separator
+    goal_block = []
+    if goal:
+        desc = (goal.get("description") or "")[:24]
+        deadline = goal.get("deadline") or ""
+        countdown = ""
+        if deadline:
+            try:
+                d = datetime.strptime(deadline, "%Y-%m-%d").date()
+                days = (d - date.today()).days
+                countdown = f"⏳ 還剩 {days} 天" if days > 0 else "🔔 今天到期"
+            except (ValueError, TypeError):
+                pass
+        goal_block = [
+            {"type": "separator", "color": C_DIVIDER, "margin": "md"},
+            {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "md",
+             "contents": [
+                 {"type": "text", "text": "🎯 進行中目標", "size": "xs",
+                  "color": C_TEXT_SOFT},
+                 {"type": "text", "text": desc, "size": "sm",
+                  "color": C_TEXT_DARK, "weight": "bold", "wrap": True},
+                 {"type": "text", "text": countdown, "size": "xs",
+                  "color": C_PRIMARY, "weight": "bold"} if countdown else {"type": "filler"},
+             ]},
+        ]
 
     body = {
         "type": "bubble",
@@ -1037,10 +1059,186 @@ def notify_settings_flex(prefs: dict) -> FlexMessage:
             "type": "box", "layout": "vertical", "backgroundColor": C_PRIMARY,
             "paddingAll": "20px", "spacing": "xs",
             "contents": [
-                {"type": "text", "text": "🔔 通知設定",
-                 "color": "#FFFFFF", "weight": "bold", "size": "lg"},
-                {"type": "text", "text": "點 ON/OFF 切換各推播",
+                {"type": "text", "text": "📰 每日早報",
+                 "color": "#FFFFFF", "weight": "bold", "size": "xl"},
+                {"type": "text", "text": f"早安 ☀️ {today_str}",
                  "color": "#FFFFFF", "size": "sm", "margin": "sm"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "md", "paddingAll": "16px",
+            "contents": [
+                # 昨晚睡眠
+                {"type": "box", "layout": "horizontal",
+                 "contents": [
+                     {"type": "text", "text": "🌙 昨晚睡眠", "size": "sm",
+                      "color": C_TEXT_DARK, "weight": "bold", "flex": 3},
+                     {"type": "text", "text": sleep_label, "size": "sm",
+                      "color": C_TEXT_DARK, "flex": 3, "align": "end"},
+                 ]},
+                # 飲水目標
+                {"type": "box", "layout": "horizontal",
+                 "contents": [
+                     {"type": "text", "text": "💧 今日飲水目標", "size": "sm",
+                      "color": C_TEXT_DARK, "weight": "bold", "flex": 3},
+                     {"type": "text", "text": f"{water_target} ml", "size": "sm",
+                      "color": C_TEXT_DARK, "flex": 3, "align": "end",
+                      "weight": "bold"},
+                 ]},
+                # 久坐提醒
+                {"type": "box", "layout": "horizontal",
+                 "contents": [
+                     {"type": "text", "text": "🪑 提醒", "size": "sm",
+                      "color": C_TEXT_DARK, "weight": "bold", "flex": 3},
+                     {"type": "text", "text": "每 2h 起來動一下", "size": "sm",
+                      "color": C_TEXT_DARK, "flex": 4, "align": "end"},
+                 ]},
+                *goal_block,
+            ],
+        },
+        "footer": {
+            "type": "box", "layout": "horizontal", "spacing": "sm", "paddingAll": "12px",
+            "contents": [
+                {"type": "button", "style": "primary", "color": COLOR_SLEEP,
+                 "height": "sm", "flex": 1,
+                 "action": {"type": "message", "label": "🌙 睡眠", "text": "睡眠"}},
+                {"type": "button", "style": "primary", "color": COLOR_WATER,
+                 "height": "sm", "flex": 1,
+                 "action": {"type": "message", "label": "💧 喝水", "text": "飲水"}},
+            ],
+        },
+    }
+    return _flex("每日早報", body)
+
+
+def evening_review_flex(profile: dict, water_ml: int, water_target: int,
+                        workout_min: float, sleep_recent: Optional[dict],
+                        goal: Optional[dict]) -> FlexMessage:
+    """晚安回顧（21:00）：今日達成 + 反思引導。"""
+    water_pct = min(100, int(water_ml * 100 / max(1, water_target)))
+    today_str = date.today().strftime("%m/%d (%a)")
+
+    coach_note = (
+        "🎉 全部到位！今晚好好休息" if water_pct >= 90 and workout_min > 0
+        else "💧 飲水沒達標，明天補回來" if water_pct < 60
+        else "💪 動了就是贏了，繼續加油" if workout_min > 0
+        else "🌱 今天沒動到也沒關係，明天再試"
+    )
+
+    goal_block = []
+    if goal:
+        desc = (goal.get("description") or "")[:24]
+        goal_block = [
+            {"type": "separator", "color": C_DIVIDER, "margin": "md"},
+            {"type": "box", "layout": "horizontal", "margin": "md",
+             "contents": [
+                 {"type": "text", "text": "🎯 目標", "size": "sm",
+                  "color": C_TEXT_DARK, "weight": "bold", "flex": 2},
+                 {"type": "text", "text": desc, "size": "sm",
+                  "color": C_TEXT_DARK, "flex": 5, "align": "end", "wrap": True},
+             ]},
+        ]
+
+    body = {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box", "layout": "vertical", "backgroundColor": COLOR_SLEEP,
+            "paddingAll": "20px", "spacing": "xs",
+            "contents": [
+                {"type": "text", "text": "🌙 晚安回顧",
+                 "color": "#FFFFFF", "weight": "bold", "size": "xl"},
+                {"type": "text", "text": f"今晚 {today_str} 的小盤點",
+                 "color": "#FFFFFF", "size": "sm", "margin": "sm"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "md", "paddingAll": "16px",
+            "contents": [
+                # 飲水
+                {"type": "box", "layout": "vertical", "spacing": "xs",
+                 "contents": [
+                     {"type": "box", "layout": "horizontal",
+                      "contents": [
+                          {"type": "text", "text": "💧 今日飲水", "size": "sm",
+                           "color": C_TEXT_DARK, "weight": "bold", "flex": 3},
+                          {"type": "text",
+                           "text": f"{water_ml}/{water_target} ml",
+                           "size": "sm", "color": C_TEXT_DARK,
+                           "flex": 3, "align": "end", "weight": "bold"},
+                      ]},
+                     _progress_bar(water_pct, COLOR_WATER),
+                 ]},
+                # 運動
+                {"type": "box", "layout": "horizontal",
+                 "contents": [
+                     {"type": "text", "text": "💪 今日運動", "size": "sm",
+                      "color": C_TEXT_DARK, "weight": "bold", "flex": 3},
+                     {"type": "text",
+                      "text": f"{int(workout_min)} 分鐘" if workout_min > 0 else "尚未紀錄",
+                      "size": "sm", "color": C_TEXT_DARK,
+                      "flex": 3, "align": "end"},
+                 ]},
+                *goal_block,
+                {"type": "separator", "color": C_DIVIDER, "margin": "md"},
+                {"type": "text", "text": coach_note,
+                 "wrap": True, "size": "sm", "color": C_TEXT_DARK,
+                 "align": "center", "margin": "md"},
+            ],
+        },
+        "footer": {
+            "type": "box", "layout": "vertical", "spacing": "sm", "paddingAll": "12px",
+            "contents": [
+                {"type": "button", "style": "primary", "color": C_ACCENT, "height": "sm",
+                 "action": {"type": "message", "label": "📝 寫今日反思",
+                            "text": "反思"}},
+                {"type": "button", "style": "link", "height": "sm",
+                 "action": {"type": "message", "label": "看完整今日進度",
+                            "text": "今日"}},
+            ],
+        },
+    }
+    return _flex("晚安回顧", body)
+
+
+NOTIFY_META = {
+    "morning": ("📰 每日早報",      "每日 09:00",                 C_PRIMARY),
+    "evening": ("🌙 晚安回顧",      "每日 21:00",                 COLOR_SLEEP),
+    "sleep":   ("🛌 早安睡眠回顧",  "每日 07:30",                 COLOR_SLEEP),
+    "water":   ("💧 飲水提醒",      "每日 09 / 12 / 15 / 18",     COLOR_WATER),
+    "stretch": ("🪑 久坐伸展",      "週一-五 11 / 14 / 16",       COLOR_STRETCH),
+    "goal":    ("🎯 目標回顧",      "每日 21:00 / 週日 20:00",    COLOR_GOAL),
+}
+
+
+def _notify_flex(title: str, subtitle: str, keys: tuple, prefs: dict,
+                 footer_extra: Optional[dict] = None) -> FlexMessage:
+    rows = []
+    for key in keys:
+        t, sched, color = NOTIFY_META[key]
+        is_on = bool(prefs.get(key, True))
+        rows.append(_notify_row(t, sched, color, is_on, key))
+        rows.append({"type": "separator", "color": C_DIVIDER})
+    rows = rows[:-1]
+
+    footer_contents = [
+        {"type": "button", "style": "link", "height": "sm",
+         "action": {"type": "message", "label": "回資料管理", "text": "資料管理"}},
+    ]
+    if footer_extra:
+        footer_contents.insert(0, footer_extra)
+
+    body = {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box", "layout": "vertical", "backgroundColor": C_PRIMARY,
+            "paddingAll": "20px", "spacing": "xs",
+            "contents": [
+                {"type": "text", "text": title,
+                 "color": "#FFFFFF", "weight": "bold", "size": "lg"},
+                {"type": "text", "text": subtitle,
+                 "color": "#FFFFFF", "size": "sm", "margin": "sm", "wrap": True},
             ],
         },
         "body": {
@@ -1048,14 +1246,36 @@ def notify_settings_flex(prefs: dict) -> FlexMessage:
             "contents": rows,
         },
         "footer": {
-            "type": "box", "layout": "vertical", "paddingAll": "12px",
-            "contents": [
-                {"type": "button", "style": "link", "height": "sm",
-                 "action": {"type": "message", "label": "回資料管理", "text": "資料管理"}},
-            ],
+            "type": "box", "layout": "vertical", "spacing": "sm", "paddingAll": "12px",
+            "contents": footer_contents,
         },
     }
-    return _flex("通知設定", body)
+    return _flex(title, body)
+
+
+def notify_settings_flex(prefs: dict) -> FlexMessage:
+    """簡易版：只顯示 每日早報 + 晚安回顧。"""
+    return _notify_flex(
+        "🔔 通知設定",
+        "預設每天兩則：09:00 早報 + 21:00 晚安回顧。\n想要更細的時段，去進階模式 ↓",
+        NOTIFY_SIMPLE_KEYS,
+        prefs,
+        footer_extra={
+            "type": "button", "style": "secondary", "height": "sm",
+            "action": {"type": "message",
+                       "label": "⚙️ 進階通知設定", "text": "進階通知設定"},
+        },
+    )
+
+
+def advanced_notify_settings_flex(prefs: dict) -> FlexMessage:
+    """進階版：分開的 4 個推播時段。"""
+    return _notify_flex(
+        "⚙️ 進階通知設定",
+        "每個項目獨立時段。需要請手動開啟。",
+        NOTIFY_ADVANCED_KEYS,
+        prefs,
+    )
 
 
 def _notify_row(title: str, sched: str, color: str, is_on: bool, key: str) -> dict:
@@ -1610,6 +1830,7 @@ def data_mgmt_menu(reply_token: str) -> None:
         "⚙️ 想做什麼？",
         qr(
             ("🔔 通知設定", "通知設定"),
+            ("⚙️ 進階通知設定", "進階通知設定"),
             ("↩️ 撤銷飲水", "撤銷飲水"),
             ("↩️ 撤銷睡眠", "撤銷睡眠"),
             ("↩️ 撤銷運動", "撤銷運動"),
@@ -1629,6 +1850,21 @@ def show_notify_settings(user_id: str, reply_token: str) -> None:
         return
     prefs = get_notify_prefs(user_id)
     reply(reply_token, [notify_settings_flex(prefs)])
+
+
+def show_advanced_notify_settings(user_id: str, reply_token: str) -> None:
+    profile = get_profile(user_id)
+    if not profile:
+        reply_text(reply_token, "請先輸入「個人資料」建立檔案 🙏")
+        return
+    prefs = get_notify_prefs(user_id)
+    reply(reply_token, [
+        TextMessage(
+            text="⚙️ 進階通知設定\n\n這裡可以「個別」開啟原本的分時段提醒（會跟每日早報/晚安回顧並存）。"
+                 "預設都是關閉，避免一天被打擾太多次。",
+        ),
+        advanced_notify_settings_flex(prefs),
+    ])
 
 
 def undo_latest_habit(user_id: str, type_: str, label: str, reply_token: str) -> None:
@@ -1838,6 +2074,9 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
     if text in ("通知設定", "🔔 通知設定", "推播設定"):
         show_notify_settings(user_id, reply_token)
         return
+    if text in ("進階通知設定", "⚙️ 進階通知設定", "進階通知"):
+        show_advanced_notify_settings(user_id, reply_token)
+        return
     if text == "撤銷飲水":
         undo_latest_habit(user_id, "water", "飲水", reply_token)
         return
@@ -1953,9 +2192,13 @@ def handle_postback(event):
             set_notify_pref(user_id, key, new_val)
             prefs[key] = new_val
             title = NOTIFY_META[key][0]
+            # 切換進階項目就回進階卡，否則回簡易卡
+            card = (advanced_notify_settings_flex(prefs)
+                    if key in NOTIFY_ADVANCED_KEYS
+                    else notify_settings_flex(prefs))
             reply(reply_token, [
                 TextMessage(text=f"{'🟢 已開啟' if new_val else '⚪ 已關閉'} {title}"),
-                notify_settings_flex(prefs),
+                card,
             ])
             return
     except Exception as exc:  # noqa: BLE001
@@ -1968,9 +2211,43 @@ def handle_postback(event):
 # ============================================================
 
 
+def job_daily_briefing():
+    """每日早報 09:00 — 簡易模式主推播。"""
+    uids = users_with_notify_on("morning")
+    logger.info("[scheduler] 推播每日早報 → %d 人", len(uids))
+    for uid in uids:
+        profile = get_profile(uid)
+        if not profile:
+            continue
+        sleep_recent = get_latest_habit(uid, "sleep")
+        goal = get_active_goal(uid)
+        water_target = profile.get("daily_water_ml") or 2000
+        push(uid, [daily_briefing_flex(profile, water_target, sleep_recent, goal)])
+
+
+def job_evening_review():
+    """晚安回顧 21:00 — 簡易模式主推播。"""
+    uids = users_with_notify_on("evening")
+    logger.info("[scheduler] 推播晚安回顧 → %d 人", len(uids))
+    for uid in uids:
+        profile = get_profile(uid)
+        if not profile:
+            continue
+        water_ml = int(get_today_habit_sum(uid, "water"))
+        water_target = profile.get("daily_water_ml") or 2000
+        workout_min = get_today_habit_sum(uid, "workout")
+        sleep_recent = get_latest_habit(uid, "sleep")
+        goal = get_active_goal(uid)
+        push(uid, [
+            evening_review_flex(profile, water_ml, water_target,
+                                workout_min, sleep_recent, goal),
+        ])
+
+
 def job_morning_sleep_recap():
+    """進階：原本 07:30 的單獨睡眠回顧（預設關，僅給手動開的人）。"""
     uids = users_with_notify_on("sleep")
-    logger.info("[scheduler] 推播早安睡眠回顧 → %d 人", len(uids))
+    logger.info("[scheduler] 進階：早安睡眠回顧 → %d 人", len(uids))
     for uid in uids:
         push(uid, [
             TextMessage(text="早安 ☀️ 先做今天的第一個紀錄："),
@@ -2014,12 +2291,16 @@ def job_goal_review(freq: str):
 
 def init_scheduler():
     sched = BackgroundScheduler(timezone="Asia/Taipei")
+    # 簡易模式（預設開啟）
+    sched.add_job(job_daily_briefing, "cron", hour=9, minute=0, id="morning_briefing")
+    sched.add_job(job_evening_review, "cron", hour=21, minute=0, id="evening_review")
+    # 進階模式（預設關閉，使用者手動開）
     sched.add_job(job_morning_sleep_recap, "cron", hour=7, minute=30, id="sleep_recap")
     sched.add_job(job_water_reminder, "cron", hour="9,12,15,18", minute=0, id="water")
     sched.add_job(job_stretch_reminder, "cron",
                   day_of_week="mon-fri", hour="11,14,16", minute=0, id="stretch")
     sched.add_job(lambda: job_goal_review("daily"), "cron",
-                  hour=21, minute=0, id="goal_daily")
+                  hour=21, minute=30, id="goal_daily")  # 移到 21:30 避開晚安回顧
     sched.add_job(lambda: job_goal_review("weekly"), "cron",
                   day_of_week="sun", hour=20, minute=0, id="goal_weekly")
     sched.start()
