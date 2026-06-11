@@ -11,11 +11,15 @@
 依賴：Flask / linebot.v3 / google-genai / supabase / APScheduler
 """
 
+import functools
 import json
 import logging
 import os
+import time
 from datetime import date, datetime
 from typing import Optional
+
+import httpx
 
 import markdown
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -77,17 +81,41 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # ============================================================
 
 
+def _sb_retry(fn=None, *, retries=3, delay=0.4):
+    """裝飾器：HTTP/2 抖動時自動重試（cold boot 常見）。"""
+    def wrapper(func):
+        @functools.wraps(func)
+        def inner(*args, **kwargs):
+            last_exc = None
+            for attempt in range(retries):
+                try:
+                    return func(*args, **kwargs)
+                except (httpx.RemoteProtocolError, httpx.ConnectError,
+                        httpx.ReadError) as exc:
+                    last_exc = exc
+                    logger.warning("Supabase 連線抖動 attempt=%d func=%s err=%s",
+                                   attempt + 1, func.__name__, exc)
+                    if attempt < retries - 1:
+                        time.sleep(delay * (attempt + 1))
+            raise last_exc
+        return inner
+    return wrapper(fn) if fn else wrapper
+
+
+@_sb_retry
 def get_profile(user_id: str) -> Optional[dict]:
     res = supabase.table("profiles").select("*").eq("user_id", user_id).execute()
     return res.data[0] if res.data else None
 
 
+@_sb_retry
 def upsert_profile(user_id: str, fields: dict) -> None:
     fields["user_id"] = user_id
     fields["updated_at"] = datetime.utcnow().isoformat()
     supabase.table("profiles").upsert(fields).execute()
 
 
+@_sb_retry
 def get_state(user_id: str) -> Optional[dict]:
     res = (
         supabase.table("conversation_state")
@@ -98,6 +126,7 @@ def get_state(user_id: str) -> Optional[dict]:
     return res.data[0] if res.data else None
 
 
+@_sb_retry
 def set_state(user_id: str, flow: str, step: str, data: Optional[dict] = None) -> None:
     payload = {
         "user_id": user_id,
@@ -109,10 +138,12 @@ def set_state(user_id: str, flow: str, step: str, data: Optional[dict] = None) -
     supabase.table("conversation_state").upsert(payload).execute()
 
 
+@_sb_retry
 def clear_state(user_id: str) -> None:
     supabase.table("conversation_state").delete().eq("user_id", user_id).execute()
 
 
+@_sb_retry
 def get_active_goal(user_id: str) -> Optional[dict]:
     res = (
         supabase.table("goals")
@@ -126,12 +157,14 @@ def get_active_goal(user_id: str) -> Optional[dict]:
     return res.data[0] if res.data else None
 
 
+@_sb_retry
 def insert_goal(user_id: str, fields: dict) -> dict:
     fields["user_id"] = user_id
     res = supabase.table("goals").insert(fields).execute()
     return res.data[0] if res.data else {}
 
 
+@_sb_retry
 def log_habit(user_id: str, type_: str, amount: Optional[float] = None,
               quality: Optional[str] = None, note: Optional[str] = None) -> None:
     supabase.table("habit_logs").insert({
@@ -143,6 +176,7 @@ def log_habit(user_id: str, type_: str, amount: Optional[float] = None,
     }).execute()
 
 
+@_sb_retry
 def get_latest_habit(user_id: str, type_: str) -> Optional[dict]:
     """拿最新一筆指定類型的習慣紀錄。"""
     res = (
@@ -157,6 +191,7 @@ def get_latest_habit(user_id: str, type_: str) -> Optional[dict]:
     return res.data[0] if res.data else None
 
 
+@_sb_retry
 def get_today_habit_sum(user_id: str, type_: str) -> float:
     today_start = datetime.combine(date.today(), datetime.min.time()).isoformat()
     res = (
@@ -170,6 +205,7 @@ def get_today_habit_sum(user_id: str, type_: str) -> float:
     return sum((row["amount"] or 0) for row in (res.data or []))
 
 
+@_sb_retry
 def insert_reflection(user_id: str, period: str, content: str, ai_summary: str) -> None:
     supabase.table("reflections").insert({
         "user_id": user_id,
@@ -179,12 +215,14 @@ def insert_reflection(user_id: str, period: str, content: str, ai_summary: str) 
     }).execute()
 
 
+@_sb_retry
 def all_active_user_ids() -> list[str]:
     """推播 job 用：取出所有已建檔的使用者 ID。"""
     res = supabase.table("profiles").select("user_id").execute()
     return [row["user_id"] for row in (res.data or [])]
 
 
+@_sb_retry
 def users_with_goal_review(freq: str) -> list[dict]:
     """回傳 review_freq=freq 的活躍目標。"""
     res = (
@@ -197,6 +235,7 @@ def users_with_goal_review(freq: str) -> list[dict]:
     return res.data or []
 
 
+@_sb_retry
 def delete_latest_habit(user_id: str, type_: str) -> Optional[dict]:
     """刪除該使用者最新一筆指定類型的 habit_log。回傳被刪的那筆。"""
     res = (
@@ -215,6 +254,7 @@ def delete_latest_habit(user_id: str, type_: str) -> Optional[dict]:
     return record
 
 
+@_sb_retry
 def delete_latest_reflection(user_id: str) -> Optional[dict]:
     res = (
         supabase.table("reflections")
@@ -231,6 +271,7 @@ def delete_latest_reflection(user_id: str) -> Optional[dict]:
     return record
 
 
+@_sb_retry
 def abandon_active_goals(user_id: str) -> int:
     """把所有 active 目標標為 abandoned，回傳被標記的筆數。"""
     res = (
@@ -257,6 +298,7 @@ def get_notify_prefs(user_id: str) -> dict:
     }
 
 
+@_sb_retry
 def set_notify_pref(user_id: str, key: str, value: bool) -> None:
     if key not in NOTIFY_KEYS:
         return
@@ -266,6 +308,7 @@ def set_notify_pref(user_id: str, key: str, value: bool) -> None:
     }).eq("user_id", user_id).execute()
 
 
+@_sb_retry
 def users_with_notify_on(key: str) -> list[str]:
     """回傳該通知開著的所有 user_id。"""
     if key not in NOTIFY_KEYS:
@@ -274,6 +317,7 @@ def users_with_notify_on(key: str) -> list[str]:
     return [row["user_id"] for row in (res.data or [])]
 
 
+@_sb_retry
 def wipe_all_user_data(user_id: str) -> dict:
     """刪除該使用者所有資料。回傳各表刪除筆數，方便回報。"""
     counts = {}
