@@ -488,7 +488,7 @@ C_SLEEP = "#7B68EE"        # 睡眠紫（夜間元素）
 COLOR_GOAL = C_PRIMARY        # 🎯 目標 — 橘
 COLOR_HABIT = C_ACCENT        # 🌱 自我成長 — 綠
 COLOR_DIET = C_PEACH          # 🥗 飲食 — 桃
-COLOR_MGMT = "#9E9E9E"        # ⚙️ 資料管理 — 中性灰
+COLOR_MGMT = "#9E9E9E"        # ⚙️ 功能設定 — 中性灰
 COLOR_WATER = "#5DADE2"       # 💧 水 — 藍
 COLOR_SLEEP = C_SLEEP         # 🌙 睡眠 — 紫
 COLOR_STRETCH = C_PEACH       # 🪑 伸展 — 桃
@@ -506,7 +506,7 @@ def main_menu_flex() -> FlexMessage:
             _menu_card("🎯", "目標設定", "用 SMART 框架設目標", COLOR_GOAL, "開始設目標", "目標設定"),
             _menu_card("🌱", "自我成長", "運動 / 飲水 / 睡眠 / 反思", COLOR_HABIT, "進入", "自我成長"),
             _menu_card("🥗", "飲食與健康", "TDEE / 菜單 / 運動點心", COLOR_DIET, "進入", "飲食與健康"),
-            _menu_card("⚙️", "資料管理", "🔔 通知 / 撤銷 / 重設 / 刪除", COLOR_MGMT, "進入", "資料管理"),
+            _menu_card("⚙️", "功能設定", "🔔 通知 / 撤銷 / 重設 / 刪除", COLOR_MGMT, "進入", "功能設定"),
         ],
     }
     return _flex("主選單", body)
@@ -1223,7 +1223,7 @@ def _notify_flex(title: str, subtitle: str, keys: tuple, prefs: dict,
 
     footer_contents = [
         {"type": "button", "style": "link", "height": "sm",
-         "action": {"type": "message", "label": "回資料管理", "text": "資料管理"}},
+         "action": {"type": "message", "label": "回功能設定", "text": "功能設定"}},
     ]
     if footer_extra:
         footer_contents.insert(0, footer_extra)
@@ -1820,7 +1820,7 @@ def show_workout_snack(user_id: str, when: str, reply_token: str) -> None:
 
 
 # ============================================================
-# 11.5 資料管理（撤銷 / 重設 / 刪除）
+# 11.5 功能設定（撤銷 / 重設 / 刪除）
 # ============================================================
 
 
@@ -1878,7 +1878,7 @@ def undo_latest_habit(user_id: str, type_: str, label: str, reply_token: str) ->
     elif record.get("quality"):
         detail = f"（{record['quality']}）"
     reply_text(reply_token,
-               f"↩️ 已撤銷最近一筆{label}紀錄{detail}。\n輸入「資料管理」回到選單。")
+               f"↩️ 已撤銷最近一筆{label}紀錄{detail}。\n輸入「功能設定」回到選單。")
 
 
 def undo_latest_reflection_cmd(user_id: str, reply_token: str) -> None:
@@ -2067,8 +2067,8 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
         diet_menu(reply_token)
         return
 
-    # 資料管理 / 刪除
-    if text in ("資料管理", "⚙️ 資料管理", "刪除", "刪除資料"):
+    # 功能設定 / 刪除
+    if text in ("功能設定", "⚙️ 功能設定", "刪除", "刪除資料"):
         data_mgmt_menu(reply_token)
         return
     if text in ("通知設定", "🔔 通知設定", "推播設定"):
