@@ -1792,8 +1792,8 @@ def _training_card(menu_key: str, menu: dict) -> dict:
             "type": "box", "layout": "vertical", "spacing": "sm", "paddingAll": "12px",
             "contents": [
                 {"type": "button", "style": "primary", "color": C_PRIMARY, "height": "sm",
-                 "action": {"type": "message", "label": "💪 開始打卡",
-                            "text": "運動打卡"}},
+                 "action": {"type": "message", "label": "✏️ 力量紀錄",
+                            "text": "力量紀錄"}},
                 {"type": "button", "style": "link", "height": "sm",
                  "action": {"type": "postback", "label": "📖 動作詳解",
                             "data": f"action=menu_detail&key={menu_key}",
@@ -2356,6 +2356,41 @@ def checkin_menu(reply_token: str) -> None:
     )
 
 
+def workout_checkin_menu(reply_token: str) -> None:
+    """運動打卡子選單：增肌 / 減脂。"""
+    reply_text(
+        reply_token,
+        "💪 訓練打卡 — 選一種",
+        qr(
+            ("🔥 增肌打卡", "增肌打卡"),
+            ("✂️ 減脂打卡", "減脂打卡"),
+        ),
+    )
+
+
+def bulk_checkin_menu(reply_token: str) -> None:
+    """增肌打卡：力量紀錄 / 我的力量。"""
+    reply_text(
+        reply_token,
+        "🔥 增肌打卡 — 想做什麼？",
+        qr(
+            ("✏️ 力量紀錄", "力量紀錄"),
+            ("💪 我的力量", "我的力量"),
+        ),
+    )
+
+
+def cut_checkin_menu(reply_token: str) -> None:
+    """減脂打卡：有氧分鐘紀錄。"""
+    reply_text(
+        reply_token,
+        "✂️ 減脂打卡 — 想做什麼？",
+        qr(
+            ("⏱️ 有氧紀錄", "有氧紀錄"),
+        ),
+    )
+
+
 def body_composition_menu(reply_token: str) -> None:
     """體態主選單：分增肌 / 減脂。"""
     reply_text(
@@ -2369,15 +2404,14 @@ def body_composition_menu(reply_token: str) -> None:
 
 
 def bulk_section_menu(reply_token: str) -> None:
-    """增肌主選單：訓練菜單 / 動作圖書館 / 力量追蹤。"""
+    """增肌主選單：訓練菜單 / 動作圖書館。
+    （力量紀錄與我的力量已搬到「打卡 → 運動打卡 → 增肌打卡」）"""
     reply_text(
         reply_token,
         "🔥 增肌專區 — 想看什麼？",
         qr(
             ("📋 訓練菜單", "訓練菜單"),
             ("📖 動作圖書館", "動作圖書館"),
-            ("💪 我的力量", "我的力量"),
-            ("✏️ 力量紀錄", "力量紀錄"),
         ),
     )
 
@@ -2880,6 +2914,15 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
         checkin_menu(reply_token)
         return
     if text in ("運動打卡", "💪 運動打卡"):
+        workout_checkin_menu(reply_token)
+        return
+    if text in ("增肌打卡", "🔥 增肌打卡"):
+        bulk_checkin_menu(reply_token)
+        return
+    if text in ("減脂打卡", "✂️ 減脂打卡"):
+        cut_checkin_menu(reply_token)
+        return
+    if text in ("有氧紀錄", "⏱️ 有氧紀錄", "運動分鐘", "運動分鐘紀錄"):
         start_workout_log(user_id, reply_token)
         return
     if text in ("飲水", "💧 飲水", "飲水紀錄", "飲水打卡", "💧 飲水打卡"):
