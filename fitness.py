@@ -1964,6 +1964,405 @@ def exercise_detail_flex(ex_id: str) -> FlexMessage:
     })
 
 
+# --- 有氧動作百科 + 燃脂菜單 ---
+
+CARDIO_EXERCISES: dict[str, dict] = {
+    "jumping_jack": {
+        "title": "開合跳", "equipment": "徒手", "category": "HIIT/全身",
+        "primary": ["心肺", "全身"],
+        "steps": [
+            "雙腳併攏站直，雙手放身側",
+            "起跳時雙腳同時往兩側開，雙手向上拍手",
+            "落地時回到起始位置，腳併攏、手放下",
+            "保持節奏連續做，落地前掌先著地緩衝",
+        ],
+        "mistakes": ["落地用整個腳掌（傷膝）", "雙手沒舉到頭頂", "節奏太快變失控"],
+        "tips": ["全程膝蓋微彎", "腰腹用力穩定軀幹", "嘴巴呼吸、別憋氣"],
+    },
+    "high_knees": {
+        "title": "高抬腿", "equipment": "徒手", "category": "HIIT/下肢",
+        "primary": ["核心", "髖屈肌", "心肺"],
+        "steps": [
+            "雙腳與肩同寬站立，雙手放胸前或自然擺臂",
+            "輪流抬起膝蓋至腰部高度",
+            "前腳掌落地、保持彈性",
+            "節奏快但維持膝蓋高度",
+        ],
+        "mistakes": ["腰駝著抬", "膝蓋抬不夠高", "用腳跟落地"],
+        "tips": ["核心緊繃保護腰", "想著「膝蓋打手」"],
+    },
+    "lunge_jump": {
+        "title": "弓箭步跳", "equipment": "徒手", "category": "HIIT/下肢",
+        "primary": ["股四頭肌", "臀大肌", "心肺"],
+        "steps": [
+            "弓箭步預備，前膝 90 度、後膝接近地面",
+            "用力跳起，空中換腳",
+            "輕落地、緩衝至弓箭步",
+            "繼續換腳跳",
+        ],
+        "mistakes": ["前膝超過腳尖", "落地太重", "上半身前傾"],
+        "tips": ["核心鎖住", "腳跟向下踩穩"],
+    },
+    "squat_jump": {
+        "title": "深蹲跳", "equipment": "徒手", "category": "HIIT/下肢",
+        "primary": ["股四頭肌", "臀大肌", "小腿"],
+        "steps": [
+            "雙腳與肩同寬，下蹲至大腿與地面平行",
+            "用力跳起，雙手往上擺",
+            "前腳掌落地、緩衝下蹲",
+            "連續做不停",
+        ],
+        "mistakes": ["蹲不夠深就跳", "膝蓋內夾", "落地僵直"],
+        "tips": ["落地像踩棉花", "用呼吸節奏"],
+    },
+    "burpee": {
+        "title": "波比跳", "equipment": "徒手", "category": "HIIT/全身",
+        "primary": ["全身", "心肺"],
+        "steps": [
+            "站姿開始，下蹲雙手撐地",
+            "雙腳向後跳成棒式（可加伏地挺身）",
+            "雙腳跳回手前，蹲姿",
+            "起身跳躍、雙手過頭",
+        ],
+        "mistakes": ["棒式時腰下塌", "落地砸地板", "節奏混亂"],
+        "tips": ["新手可分解（先下後上）", "求穩不求快"],
+    },
+    "mountain_climber": {
+        "title": "登山者", "equipment": "徒手", "category": "HIIT/核心",
+        "primary": ["核心", "髖屈肌", "心肺"],
+        "steps": [
+            "棒式預備，手肘略彎、核心收緊",
+            "輪流把膝蓋拉向胸口",
+            "前腳掌點地、節奏穩定",
+            "保持髖部低，不要翹屁股",
+        ],
+        "mistakes": ["屁股翹高", "腰下塌", "膝蓋沒拉到胸口"],
+        "tips": ["想像在跑步機上跑", "肩膀正對手腕上方"],
+    },
+    "plank": {
+        "title": "平板撐", "equipment": "徒手", "category": "核心",
+        "primary": ["核心", "肩膀", "臀部"],
+        "steps": [
+            "前臂貼地、手肘正對肩膀下方",
+            "腳尖撐地，身體呈一直線",
+            "夾緊臀部、收緊核心",
+            "保持自然呼吸",
+        ],
+        "mistakes": ["腰下塌（傷腰）", "屁股翹高（沒練到核心）", "脖子前伸"],
+        "tips": ["眼睛看地板、脖子放鬆", "撐不住就降為跪姿"],
+    },
+    "jump_rope": {
+        "title": "跳繩", "equipment": "跳繩", "category": "有氧/全身",
+        "primary": ["小腿", "心肺", "協調"],
+        "steps": [
+            "雙手肘貼身、手腕用力轉繩",
+            "前腳掌起跳、輕落地",
+            "保持節奏連續跳",
+            "繩子打到腿就調整繩長",
+        ],
+        "mistakes": ["跳太高浪費體力", "雙臂大幅擺動", "腳跟落地"],
+        "tips": ["跳 1-2 公分高就夠", "新手練雙腳跳熟再進階"],
+    },
+    "skater": {
+        "title": "側向滑板跳", "equipment": "徒手", "category": "HIIT/下肢",
+        "primary": ["臀大肌", "股四頭肌", "心肺"],
+        "steps": [
+            "單腳站立，另一腳在後方輕點地",
+            "用力側向跳，落地換邊單腳站立",
+            "雙手自然擺動配合節奏",
+            "連續左右換邊",
+        ],
+        "mistakes": ["落地膝蓋內夾", "上半身前傾", "步幅太小"],
+        "tips": ["想像滑冰選手的側向步伐", "落地腳跟微微彎曲"],
+    },
+    "plank_up": {
+        "title": "棒式撐起", "equipment": "徒手", "category": "核心/上肢",
+        "primary": ["核心", "三頭肌", "肩膀"],
+        "steps": [
+            "從前臂棒式開始",
+            "依序伸直右手、左手成伏地挺身姿",
+            "再依序屈右肘、左肘回前臂棒式",
+            "下一輪換邊先撐",
+        ],
+        "mistakes": ["臀部左右扭動", "腰塌", "速度太快"],
+        "tips": ["核心鎖住、髖部穩定", "每邊輪流先撐避免肌肉不對稱"],
+    },
+    "bicycle_crunch": {
+        "title": "自行車仰臥起坐", "equipment": "徒手", "category": "核心",
+        "primary": ["腹直肌", "腹斜肌"],
+        "steps": [
+            "仰躺，雙手輕扶頭後、雙腳離地",
+            "右肘觸左膝、同時右腳伸直",
+            "換邊：左肘觸右膝、左腳伸直",
+            "節奏穩定、像踩腳踏車",
+        ],
+        "mistakes": ["拉脖子（傷頸椎）", "腰離地", "節奏太快變晃"],
+        "tips": ["手只是輕扶不出力", "感覺腹斜肌在收縮"],
+    },
+    "flutter_kick": {
+        "title": "蹬腳", "equipment": "徒手", "category": "核心",
+        "primary": ["下腹部", "髖屈肌"],
+        "steps": [
+            "仰躺，雙手放臀部兩側",
+            "雙腳離地 15-20 公分",
+            "兩腳上下交替小幅度擺動",
+            "下背保持貼地",
+        ],
+        "mistakes": ["下背離地（會傷腰）", "幅度太大", "頭抬離地"],
+        "tips": ["下背壓住地板再開始", "腿放愈低、難度愈高"],
+    },
+    "brisk_walk": {
+        "title": "健走", "equipment": "徒手", "category": "有氧/穩定",
+        "primary": ["下肢", "心肺"],
+        "steps": [
+            "抬頭挺胸、肩膀放鬆",
+            "步幅大一點、自然擺臂",
+            "保持心率 100-130（能聊天但不能唱歌）",
+            "持續 30-60 分鐘",
+        ],
+        "mistakes": ["低頭看手機", "步幅太小變散步"],
+        "tips": ["上坡或加重背包提升強度", "搭配 podcast 增加持續性"],
+    },
+    "jogging": {
+        "title": "慢跑", "equipment": "徒手", "category": "有氧/穩定",
+        "primary": ["下肢", "心肺"],
+        "steps": [
+            "前 5 分鐘暖身走",
+            "切換慢跑，速度能說整句話",
+            "目標心率 130-150 區間",
+            "結束前 3-5 分鐘緩和走",
+        ],
+        "mistakes": ["一開始就衝太快", "跨步太大", "不暖身"],
+        "tips": ["前腳掌或中足著地", "找節奏穩定的歌單配速"],
+    },
+    "step_up": {
+        "title": "跳台階", "equipment": "台階/箱子", "category": "有氧/下肢",
+        "primary": ["臀大肌", "股四頭肌", "心肺"],
+        "steps": [
+            "面對 30-50 公分穩固台階",
+            "輪流踩上、踩下",
+            "踩上時主動發力推地",
+            "保持節奏不要趕",
+        ],
+        "mistakes": ["膝蓋內夾", "重心不穩晃動", "台階不穩"],
+        "tips": ["前腳掌全踩上去", "可加啞鈴增加強度"],
+    },
+}
+
+# 每筆是 (exercise_id, 顯示時長/組數)
+CARDIO_MENUS: dict[str, dict] = {
+    "home_20": {
+        "title": "居家燃脂 20 分鐘", "emoji": "🏠",
+        "subtitle": "新手友善 · 無器材",
+        "color": COLOR_DIET,
+        "items": [
+            ("jumping_jack",   "30 秒 × 4 輪"),
+            ("high_knees",     "30 秒 × 4 輪"),
+            ("squat_jump",     "30 秒 × 4 輪"),
+            ("mountain_climber","30 秒 × 4 輪"),
+            ("plank",          "45 秒 × 3 輪"),
+        ],
+    },
+    "hiit_25": {
+        "title": "HIIT 25 分鐘", "emoji": "🔥",
+        "subtitle": "高強度間歇 · 燃脂效率最高",
+        "color": "#E55B25",
+        "items": [
+            ("burpee",         "30 秒 → 30 秒休 × 5 輪"),
+            ("mountain_climber","30 秒 → 30 秒休 × 5 輪"),
+            ("squat_jump",     "30 秒 → 30 秒休 × 4 輪"),
+            ("lunge_jump",     "30 秒 → 30 秒休 × 4 輪"),
+            ("plank_up",       "20 秒 → 20 秒休 × 4 輪"),
+        ],
+    },
+    "jog_45": {
+        "title": "戶外慢跑 45 分鐘", "emoji": "🏃",
+        "subtitle": "穩定有氧 · LISS 燃脂",
+        "color": "#5DADE2",
+        "items": [
+            ("brisk_walk",     "5 分鐘 暖身"),
+            ("jogging",        "35 分鐘 維持心率 130-150"),
+            ("brisk_walk",     "3 分鐘 緩和"),
+        ],
+    },
+    "tabata_8": {
+        "title": "Tabata 8 分鐘", "emoji": "⚡",
+        "subtitle": "極短爆汗 · 4 分鐘核心",
+        "color": "#FF6B35",
+        "items": [
+            ("squat_jump",     "20 秒 → 10 秒休 × 8 輪"),
+            ("mountain_climber","20 秒 → 10 秒休 × 8 輪"),
+            ("plank",          "30 秒 收操"),
+        ],
+    },
+    "circuit_30": {
+        "title": "全身循環 30 分鐘", "emoji": "💃",
+        "subtitle": "中強度 · 4 動作 × 4 輪",
+        "color": COLOR_HABIT,
+        "items": [
+            ("burpee",         "1 分鐘 × 4 輪"),
+            ("jumping_jack",   "1 分鐘 × 4 輪"),
+            ("lunge_jump",     "1 分鐘 × 4 輪"),
+            ("bicycle_crunch", "1 分鐘 × 4 輪"),
+        ],
+    },
+}
+
+_CARDIO_MUSCLE_ZH_TO_KEY = {
+    "居家": "home_20", "HIIT": "hiit_25", "慢跑": "jog_45",
+    "Tabata": "tabata_8", "循環": "circuit_30",
+}
+
+
+def cardio_menu_flex() -> FlexMessage:
+    """燃脂菜單 5 套 Carousel。"""
+    return _flex("燃脂菜單", {
+        "type": "carousel",
+        "contents": [_cardio_card(k, v) for k, v in CARDIO_MENUS.items()],
+    })
+
+
+def _cardio_card(menu_key: str, menu: dict) -> dict:
+    items = menu["items"]
+    item_rows = []
+    for ex_id, duration in items:
+        ex = CARDIO_EXERCISES.get(ex_id, {})
+        title = ex.get("title", ex_id)
+        item_rows.append({
+            "type": "box", "layout": "horizontal", "spacing": "sm",
+            "contents": [
+                {"type": "text", "text": title,
+                 "size": "sm", "flex": 4, "wrap": True, "color": C_TEXT_DARK},
+                {"type": "text", "text": duration,
+                 "size": "xs", "flex": 5, "align": "end",
+                 "weight": "bold", "color": menu["color"], "wrap": True},
+            ],
+        })
+
+    return {
+        "type": "bubble", "size": "kilo",
+        "header": {
+            "type": "box", "layout": "vertical",
+            "backgroundColor": menu["color"], "paddingAll": "30px", "spacing": "xs",
+            "contents": [
+                {"type": "text", "text": menu["emoji"],
+                 "size": "5xl", "align": "center", "color": "#FFFFFF"},
+                {"type": "text", "text": menu["title"],
+                 "weight": "bold", "size": "lg", "color": "#FFFFFF",
+                 "align": "center", "margin": "sm"},
+                {"type": "text", "text": menu["subtitle"],
+                 "size": "xs", "color": "#FFFFFF",
+                 "align": "center", "margin": "xs", "wrap": True},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "sm", "paddingAll": "16px",
+            "contents": [
+                {"type": "text", "text": f"{len(items)} 個項目",
+                 "size": "xs", "color": C_TEXT_SOFT, "margin": "xs"},
+                {"type": "separator", "color": C_DIVIDER, "margin": "md"},
+                {"type": "box", "layout": "vertical",
+                 "spacing": "sm", "margin": "md",
+                 "contents": item_rows},
+            ],
+        },
+        "footer": {
+            "type": "box", "layout": "vertical", "spacing": "sm", "paddingAll": "12px",
+            "contents": [
+                {"type": "button", "style": "primary",
+                 "color": menu["color"], "height": "sm",
+                 "action": {"type": "message", "label": "⏱️ 開始打卡",
+                            "text": "有氧紀錄"}},
+                {"type": "button", "style": "link", "height": "sm",
+                 "action": {"type": "postback", "label": "📖 動作詳解",
+                            "data": f"action=cardio_menu_detail&key={menu_key}",
+                            "displayText": f"看 {menu['title']} 動作詳解"}},
+            ],
+        },
+    }
+
+
+def cardio_exercise_detail_flex(ex_id: str) -> FlexMessage:
+    ex = CARDIO_EXERCISES[ex_id]
+    color = COLOR_DIET
+
+    def _block(title: str, items: list, emoji: str) -> list:
+        rows = [{
+            "type": "text", "text": f"{emoji} {title}",
+            "weight": "bold", "size": "sm", "color": color, "margin": "md",
+        }]
+        for i, it in enumerate(items, 1):
+            rows.append({
+                "type": "text", "text": f"{i}. {it}",
+                "wrap": True, "size": "xs", "color": C_TEXT_DARK,
+                "margin": "xs",
+            })
+        return rows
+
+    body_contents = [
+        {"type": "box", "layout": "horizontal",
+         "contents": [
+             {"type": "text", "text": "🎯 目標",
+              "size": "xs", "flex": 2, "color": C_TEXT_SOFT, "weight": "bold"},
+             {"type": "text", "text": "・".join(ex.get("primary", [])),
+              "size": "xs", "flex": 4, "color": C_TEXT_DARK,
+              "align": "end", "wrap": True},
+         ]},
+        {"type": "box", "layout": "horizontal", "margin": "sm",
+         "contents": [
+             {"type": "text", "text": "🛠️ 器材",
+              "size": "xs", "flex": 2, "color": C_TEXT_SOFT, "weight": "bold"},
+             {"type": "text", "text": ex["equipment"],
+              "size": "xs", "flex": 4, "color": C_TEXT_DARK, "align": "end"},
+         ]},
+        {"type": "box", "layout": "horizontal", "margin": "sm",
+         "contents": [
+             {"type": "text", "text": "🏷️ 類型",
+              "size": "xs", "flex": 2, "color": C_TEXT_SOFT, "weight": "bold"},
+             {"type": "text", "text": ex.get("category", "—"),
+              "size": "xs", "flex": 4, "color": C_TEXT_DARK, "align": "end"},
+         ]},
+        {"type": "separator", "color": C_DIVIDER, "margin": "md"},
+        *_block("動作步驟", ex["steps"], "📋"),
+        *_block("常見錯誤", ex["mistakes"], "⚠️"),
+        *_block("小提示", ex["tips"], "💡"),
+    ]
+
+    return _flex(ex["title"], {
+        "type": "bubble", "size": "mega",
+        "header": {
+            "type": "box", "layout": "vertical", "backgroundColor": color,
+            "paddingAll": "20px", "spacing": "xs",
+            "contents": [
+                {"type": "text", "text": f"📖 {ex['title']}",
+                 "color": "#FFFFFF", "weight": "bold", "size": "xl"},
+                {"type": "text", "text": f"{ex['equipment']} · {ex.get('category', '')}",
+                 "color": "#FFFFFF", "size": "sm", "margin": "sm"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "xs", "paddingAll": "16px",
+            "contents": body_contents,
+        },
+    })
+
+
+def cardio_menu_detail_carousel_flex(menu_key: str) -> FlexMessage:
+    """某燃脂菜單裡所有動作的詳解 Carousel。"""
+    menu = CARDIO_MENUS[menu_key]
+    cards = []
+    seen = set()
+    for ex_id, _ in menu["items"]:
+        if ex_id in seen:
+            continue
+        seen.add(ex_id)
+        card = cardio_exercise_detail_flex(ex_id)
+        cards.append(json.loads(card.contents.to_json()))
+    return _flex(f"{menu['title']} 動作詳解", {
+        "type": "carousel", "contents": cards,
+    })
+
+
 # --- 自訂菜單 ---
 
 MAX_CUSTOM_WORKOUTS_PER_USER = 5
@@ -2830,11 +3229,42 @@ def bulk_section_menu(reply_token: str) -> None:
     )
 
 
-def cut_section_placeholder(reply_token: str) -> None:
+def cut_section_menu(reply_token: str) -> None:
+    """減脂主選單：燃脂菜單 / 有氧動作圖書館。"""
     reply_text(
         reply_token,
-        "✂️ 減脂專區建置中⋯\n敬請期待 ✨",
+        "✂️ 減脂專區 — 想看什麼？",
+        qr(
+            ("🔥 燃脂菜單", "燃脂菜單"),
+            ("📖 有氧動作圖書館", "有氧動作圖書館"),
+        ),
     )
+
+
+def show_cardio_menus(reply_token: str) -> None:
+    reply(reply_token, [cardio_menu_flex()])
+
+
+def cardio_library_menu(reply_token: str) -> None:
+    reply_text(
+        reply_token,
+        "📖 有氧動作圖書館 — 想看哪一套？",
+        qr(
+            ("🏠 居家", "有氧動作 居家"),
+            ("🔥 HIIT", "有氧動作 HIIT"),
+            ("🏃 慢跑", "有氧動作 慢跑"),
+            ("⚡ Tabata", "有氧動作 Tabata"),
+            ("💃 全身循環", "有氧動作 循環"),
+        ),
+    )
+
+
+def show_cardio_exercises_by_menu(menu_zh: str, reply_token: str) -> None:
+    key = _CARDIO_MUSCLE_ZH_TO_KEY.get(menu_zh)
+    if not key:
+        reply_text(reply_token, "找不到這套菜單 🤔")
+        return
+    reply(reply_token, [cardio_menu_detail_carousel_flex(key)])
 
 
 def show_training_menus(reply_token: str) -> None:
@@ -3505,7 +3935,17 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
         start_custom_workout_create(user_id, reply_token)
         return
     if text in ("減脂", "✂️ 減脂", "減脂專區"):
-        cut_section_placeholder(reply_token)
+        cut_section_menu(reply_token)
+        return
+    if text in ("燃脂菜單", "🔥 燃脂菜單", "燃脂課表"):
+        show_cardio_menus(reply_token)
+        return
+    if text in ("有氧動作圖書館", "📖 有氧動作圖書館", "有氧動作"):
+        cardio_library_menu(reply_token)
+        return
+    if text.startswith("有氧動作 "):
+        menu_zh = text.replace("有氧動作 ", "", 1).strip()
+        show_cardio_exercises_by_menu(menu_zh, reply_token)
         return
     if text in ("日曆", "📅 日曆", "行事曆"):
         calendar_section_placeholder(reply_token)
@@ -3669,6 +4109,14 @@ def handle_postback(event):
                 reply_text(reply_token, "找不到這個菜單 🤔")
                 return
             reply(reply_token, [menu_detail_carousel_flex(menu_key)])
+            return
+
+        if action == "cardio_menu_detail":
+            menu_key = params.get("key", "")
+            if menu_key not in CARDIO_MENUS:
+                reply_text(reply_token, "找不到這個菜單 🤔")
+                return
+            reply(reply_token, [cardio_menu_detail_carousel_flex(menu_key)])
             return
 
         if action == "cw_view":
