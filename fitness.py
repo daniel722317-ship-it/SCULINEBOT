@@ -598,9 +598,8 @@ def main_menu_flex() -> FlexMessage:
         "type": "carousel",
         "contents": [
             _menu_card("🎯", "目標設定", "用 SMART 框架設目標", COLOR_GOAL, "開始設目標", "目標設定"),
-            _menu_card("🌱", "自我成長", "運動 / 飲水 / 睡眠 / 反思", COLOR_HABIT, "進入", "自我成長"),
+            _menu_card("🌱", "自我成長", "反思 / 壞習慣 / 知識 / 今日進度", COLOR_HABIT, "進入", "自我成長"),
             _menu_card("🥗", "飲食與健康", "TDEE / 菜單 / 運動點心", COLOR_DIET, "進入", "飲食與健康"),
-            _menu_card("⚙️", "功能設定", "🔔 通知 / 撤銷 / 重設 / 刪除", COLOR_MGMT, "進入", "功能設定"),
         ],
     }
     return _flex("主選單", body)
@@ -2571,9 +2570,6 @@ def self_growth_menu(reply_token: str) -> None:
         reply_token,
         "🌱 今天想紀錄什麼？",
         qr(
-            ("🏋️ 運動", "運動"),
-            ("💧 喝水", "飲水"),
-            ("🌙 睡眠", "睡眠紀錄"),
             ("📝 寫反思", "反思"),
             ("🚫 壞習慣", "壞習慣"),
             ("📚 知識補給", "健身知識"),
@@ -3445,10 +3441,21 @@ def handle_postback(event):
             profile = get_profile(user_id)
             target = (profile or {}).get("daily_water_ml") or 2000
             current = int(get_today_habit_sum(user_id, "water"))
-            reply(reply_token, [
-                TextMessage(text=f"🥤 乾杯！今天累積 {current} / {target} ml"),
-                water_card_flex(current, target),
-            ])
+            pct = min(100, int(current * 100 / max(1, target)))
+            cheer = (
+                "🎉 達標了！繼續保持！" if pct >= 100
+                else "💪 快達標了！再加一杯！" if pct >= 75
+                else "👍 進度不錯，繼續喝！" if pct >= 50
+                else "💧 慢慢累積，每口都算！"
+            )
+            reply_text(
+                reply_token,
+                f"🥤 乾杯！\n今天累積 {current} / {target} ml ({pct}%)\n{cheer}",
+                qr(
+                    ("📋 主選單", "選單"),
+                    ("📊 今日進度", "今日"),
+                ),
+            )
             return
 
         if action == "log_sleep":
