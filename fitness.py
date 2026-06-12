@@ -16,8 +16,11 @@ import json
 import logging
 import os
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
+from zoneinfo import ZoneInfo
+
+TPE = ZoneInfo("Asia/Taipei")
 
 import httpx
 
@@ -360,6 +363,67 @@ def get_all_lifts_overview(user_id: str, limit: int = 12) -> dict:
         if len(out) >= limit:
             break
     return out
+
+
+@_sb_retry
+def get_cardio_overview(user_id: str) -> dict:
+    """聚合有氧（type=workout）紀錄：本週/月累計、連續打卡、最近 5 筆。"""
+    now_tpe = datetime.now(TPE)
+    today_tpe = now_tpe.date()
+    week_start = today_tpe - timedelta(days=today_tpe.weekday())  # 週一
+    month_start = today_tpe.replace(day=1)
+    streak_cutoff = today_tpe - timedelta(days=60)  # 多抓 60 天供 streak 計算
+
+    cutoff_iso = datetime.combine(streak_cutoff, datetime.min.time()).isoformat()
+    res = (
+        supabase.table("habit_logs")
+        .select("amount, recorded_at")
+        .eq("user_id", user_id).eq("type", "workout")
+        .gte("recorded_at", cutoff_iso)
+        .order("recorded_at", desc=True)
+        .execute()
+    )
+    rows = res.data or []
+
+    week_total = 0.0
+    week_count = 0
+    month_total = 0.0
+    month_count = 0
+    dates_set: set = set()
+
+    for r in rows:
+        ts = r.get("recorded_at")
+        if isinstance(ts, str):
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        else:
+            dt = ts
+        d = dt.astimezone(TPE).date()
+        dates_set.add(d)
+        mins = float(r.get("amount") or 0)
+        if d >= week_start:
+            week_total += mins
+            week_count += 1
+        if d >= month_start:
+            month_total += mins
+            month_count += 1
+
+    # 連續打卡（streak）：從今天或昨天往回算
+    streak = 0
+    cursor = today_tpe
+    if cursor not in dates_set:
+        cursor -= timedelta(days=1)
+    while cursor in dates_set:
+        streak += 1
+        cursor -= timedelta(days=1)
+
+    return {
+        "week_total": int(week_total),
+        "week_count": week_count,
+        "month_total": int(month_total),
+        "month_count": month_count,
+        "streak": streak,
+        "recent": rows[:5],
+    }
 
 
 @_sb_retry
@@ -2070,6 +2134,97 @@ def custom_workout_card_flex(workout: dict) -> FlexMessage:
     return _flex(workout["name"], bubble)
 
 
+def cardio_overview_flex(data: dict) -> FlexMessage:
+    """🏃 我的有氧 — 本週/月累計 + 連續打卡 + 最近紀錄。"""
+    color = COLOR_DIET  # 桃橘色，跟減脂主題搭
+
+    is_empty = data["week_count"] == 0 and data["month_count"] == 0
+
+    if is_empty:
+        body_contents = [{
+            "type": "text",
+            "text": "尚未有有氧紀錄\n\n打「有氧紀錄」開始追蹤吧 🏃",
+            "wrap": True, "size": "sm", "color": C_TEXT_SOFT, "align": "center",
+        }]
+    else:
+        streak = data["streak"]
+        body_contents = [
+            _stat_row("📆 本週累計",
+                     f"{data['week_total']} 分 / {data['week_count']} 次", color),
+            _stat_row("📅 本月累計",
+                     f"{data['month_total']} 分 / {data['month_count']} 次", color),
+            _stat_row("🔥 連續打卡",
+                     f"{streak} 天" if streak > 0 else "—",
+                     color if streak > 0 else C_TEXT_SOFT),
+        ]
+        if data["recent"]:
+            body_contents.append({"type": "separator", "color": C_DIVIDER, "margin": "md"})
+            body_contents.append({
+                "type": "text", "text": "最近紀錄",
+                "size": "xs", "color": C_TEXT_SOFT,
+                "weight": "bold", "margin": "md",
+            })
+            for r in data["recent"]:
+                ts = r.get("recorded_at")
+                if isinstance(ts, str):
+                    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                else:
+                    dt = ts
+                d = dt.astimezone(TPE).date()
+                mins = int(float(r.get("amount") or 0))
+                body_contents.append({
+                    "type": "box", "layout": "horizontal", "spacing": "sm",
+                    "contents": [
+                        {"type": "text",
+                         "text": d.strftime("%m/%d"), "size": "sm",
+                         "color": C_TEXT_SOFT, "flex": 2},
+                        {"type": "text",
+                         "text": f"{mins} 分鐘", "size": "sm",
+                         "color": C_TEXT_DARK, "flex": 3, "align": "end",
+                         "weight": "bold"},
+                    ],
+                })
+
+    return _flex("我的有氧", {
+        "type": "bubble", "size": "mega",
+        "header": {
+            "type": "box", "layout": "vertical",
+            "backgroundColor": color, "paddingAll": "20px", "spacing": "xs",
+            "contents": [
+                {"type": "text", "text": "🏃 我的有氧",
+                 "color": "#FFFFFF", "weight": "bold", "size": "xl"},
+                {"type": "text", "text": "過去 60 天統計",
+                 "color": "#FFFFFF", "size": "sm", "margin": "sm"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "md", "paddingAll": "16px",
+            "contents": body_contents,
+        },
+        "footer": {
+            "type": "box", "layout": "vertical", "paddingAll": "12px",
+            "contents": [{
+                "type": "button", "style": "primary",
+                "color": color, "height": "sm",
+                "action": {"type": "message",
+                           "label": "⏱️ 新增有氧紀錄", "text": "有氧紀錄"},
+            }],
+        },
+    })
+
+
+def _stat_row(label: str, value: str, color: str) -> dict:
+    return {
+        "type": "box", "layout": "horizontal",
+        "contents": [
+            {"type": "text", "text": label, "size": "sm",
+             "weight": "bold", "color": C_TEXT_DARK, "flex": 3},
+            {"type": "text", "text": value, "size": "md",
+             "weight": "bold", "color": color, "flex": 4, "align": "end"},
+        ],
+    }
+
+
 def _custom_workout_intro_card() -> dict:
     """訓練菜單 Carousel 最後一張：自訂菜單入口（bubble dict 直接給 carousel 用）。"""
     return {
@@ -2630,14 +2785,24 @@ def bulk_checkin_menu(reply_token: str) -> None:
 
 
 def cut_checkin_menu(reply_token: str) -> None:
-    """減脂打卡：有氧分鐘紀錄。"""
+    """減脂打卡：有氧紀錄 + 我的有氧。"""
     reply_text(
         reply_token,
         "✂️ 減脂打卡 — 想做什麼？",
         qr(
             ("⏱️ 有氧紀錄", "有氧紀錄"),
+            ("🏃 我的有氧", "我的有氧"),
         ),
     )
+
+
+def show_cardio_overview(user_id: str, reply_token: str) -> None:
+    profile = get_profile(user_id)
+    if not profile:
+        reply_text(reply_token, "請先輸入「個人資料」建立檔案 🙏")
+        return
+    data = get_cardio_overview(user_id)
+    reply(reply_token, [cardio_overview_flex(data)])
 
 
 def body_composition_menu(reply_token: str) -> None:
@@ -2919,7 +3084,7 @@ def calendar_section_placeholder(reply_token: str) -> None:
 
 def start_workout_log(user_id: str, reply_token: str) -> None:
     set_state(user_id, "workout_log", "minutes", {})
-    reply_text(reply_token, "💪 今天動了幾分鐘？（直接打數字）")
+    reply_text(reply_token, "⏱️ 今天有氧多少分鐘？（直接打數字）")
 
 
 def handle_workout_log(user_id: str, text: str, reply_token: str, state: dict) -> None:
@@ -2930,8 +3095,14 @@ def handle_workout_log(user_id: str, text: str, reply_token: str, state: dict) -
         return
     log_habit(user_id, "workout", amount=minutes)
     clear_state(user_id)
-    reply_text(reply_token,
-               f"📒 紀錄完成：今天 {int(minutes)} 分鐘 ✅\n動了就是贏了 💪")
+    reply_text(
+        reply_token,
+        f"📒 紀錄完成：今天 {int(minutes)} 分鐘 ✅\n動了就是贏了 💪",
+        qr(
+            ("🏃 我的有氧", "我的有氧"),
+            ("📋 主選單", "選單"),
+        ),
+    )
 
 
 def bad_habit_menu(reply_token: str) -> None:
@@ -3293,6 +3464,9 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
         return
     if text in ("有氧紀錄", "⏱️ 有氧紀錄", "運動分鐘", "運動分鐘紀錄"):
         start_workout_log(user_id, reply_token)
+        return
+    if text in ("我的有氧", "🏃 我的有氧", "有氧總覽"):
+        show_cardio_overview(user_id, reply_token)
         return
     if text in ("飲水", "💧 飲水", "飲水紀錄", "飲水打卡", "💧 飲水打卡"):
         show_water_card(user_id, reply_token)
