@@ -3462,8 +3462,19 @@ def handle_postback(event):
             quality = params.get("quality", "normal")
             log_habit(user_id, "sleep", quality=quality)
             label = {"good": "睡得好 😴", "normal": "普通 😐", "bad": "睡得不好 😣"}.get(quality, "")
-            reply_text(reply_token,
-                       f"已紀錄昨晚 {label}。\n如果想補記睡眠時數，輸入「睡眠 7.5」這樣的格式即可。")
+            cheer = {
+                "good": "💪 修復滿格，今天有體力好好訓練！",
+                "normal": "🌱 累積好習慣，明天可以更好",
+                "bad": "🛌 今晚試試提早 30 分鐘關燈，肌肉是在睡眠中長大的",
+            }.get(quality, "")
+            reply_text(
+                reply_token,
+                f"🌙 已紀錄昨晚 {label}\n{cheer}",
+                qr(
+                    ("📋 主選單", "選單"),
+                    ("📊 今日進度", "今日"),
+                ),
+            )
             return
 
         if action == "log_stretch":
