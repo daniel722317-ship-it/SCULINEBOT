@@ -13,6 +13,9 @@ venv/
 # Rich menu output (隨時可重新跑 setup_rich_menu.py 產生)
 richmenu.png
 
+# 肌肉解剖參考圖（中間檔，重生時用 gen_muscle_v2.py 會重新下載）
+muscles/_ref_*.png
+
 # Debug logs
 hflog.txt
 *.log
