@@ -94,11 +94,13 @@ create table if not exists custom_workouts (
     id bigserial primary key,
     user_id text not null,
     name text not null,
-    items jsonb not null,            -- [{exercise, sets, reps}, ...]
+    items jsonb not null,            -- strength: [{exercise, sets, reps}, ...]
+                                     -- cardio:   [{exercise, duration}, ...]
+    category text not null default 'strength',  -- 'strength' | 'cardio'
     created_at timestamptz default now()
 );
 create index if not exists custom_workouts_user_idx
-    on custom_workouts(user_id, created_at desc);
+    on custom_workouts(user_id, category, created_at desc);
 
 
 -- 7. 反思紀錄

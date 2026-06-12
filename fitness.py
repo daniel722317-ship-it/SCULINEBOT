@@ -546,10 +546,10 @@ def get_cardio_overview(user_id: str) -> dict:
 
 
 @_sb_retry
-def get_user_custom_workouts(user_id: str) -> list[dict]:
+def get_user_custom_workouts(user_id: str, category: str = "strength") -> list[dict]:
     res = (
         supabase.table("custom_workouts").select("*")
-        .eq("user_id", user_id)
+        .eq("user_id", user_id).eq("category", category)
         .order("created_at", desc=True)
         .execute()
     )
@@ -567,9 +567,10 @@ def get_custom_workout(workout_id: int, user_id: str) -> Optional[dict]:
 
 
 @_sb_retry
-def insert_custom_workout(user_id: str, name: str, items: list[dict]) -> dict:
+def insert_custom_workout(user_id: str, name: str,
+                          items: list[dict], category: str = "strength") -> dict:
     res = supabase.table("custom_workouts").insert({
-        "user_id": user_id, "name": name, "items": items,
+        "user_id": user_id, "name": name, "items": items, "category": category,
     }).execute()
     return res.data[0] if res.data else {}
 
@@ -2390,10 +2391,12 @@ _CARDIO_MUSCLE_ZH_TO_KEY = {
 
 
 def cardio_menu_flex() -> FlexMessage:
-    """燃脂菜單 5 套 Carousel。"""
+    """燃脂菜單 5 套 Carousel + 最後一張自訂菜單入口。"""
+    contents = [_cardio_card(k, v) for k, v in CARDIO_MENUS.items()]
+    contents.append(_cardio_custom_intro_card())
     return _flex("燃脂菜單", {
         "type": "carousel",
-        "contents": [_cardio_card(k, v) for k, v in CARDIO_MENUS.items()],
+        "contents": contents,
     })
 
 
@@ -2796,6 +2799,218 @@ def _stat_row(label: str, value: str, color: str) -> dict:
             {"type": "text", "text": value, "size": "md",
              "weight": "bold", "color": color, "flex": 4, "align": "end"},
         ],
+    }
+
+
+def parse_cardio_workout_items(text: str) -> list[dict]:
+    """解析有氧自訂菜單的動作清單。
+
+    格式（每行一筆）：
+    - 「動作名 ｜ 時長」（推薦）：burpee｜30秒×4輪
+    - 「動作名 時長」（簡寫）：慢跑 30 分鐘
+    - 多筆用 / 或換行分隔
+
+    失敗回拋 ValueError。
+    """
+    normalized = (
+        text.replace("｜", "|").replace("/", "\n")
+    )
+    lines = [ln.strip() for ln in normalized.splitlines() if ln.strip()]
+    items = []
+    for line in lines:
+        if "|" in line:
+            parts = line.split("|", 1)
+            exercise = parts[0].strip()
+            duration = parts[1].strip()
+        else:
+            tokens = line.split(maxsplit=1)
+            if len(tokens) < 2:
+                raise ValueError(
+                    f"「{line}」格式不對\n"
+                    "要：動作名 時長  或  動作名｜時長"
+                )
+            exercise = tokens[0].strip()
+            duration = tokens[1].strip()
+        if not exercise:
+            raise ValueError("動作名不能空")
+        if not duration:
+            raise ValueError("時長不能空")
+        if len(exercise) > MAX_EXERCISE_LEN:
+            raise ValueError(f"動作名「{exercise}」超過 {MAX_EXERCISE_LEN} 字")
+        if len(duration) > 40:
+            raise ValueError(f"時長「{duration}」超過 40 字")
+        items.append({"exercise": exercise, "duration": duration})
+    return items
+
+
+def cardio_custom_workouts_overview_flex(workouts: list[dict]) -> FlexMessage:
+    """所有有氧自訂菜單列表 Flex。"""
+    if not workouts:
+        body_contents = [
+            {"type": "text",
+             "text": "還沒建立任何有氧自訂菜單\n打「建立自訂有氧菜單」開始 ✨",
+             "wrap": True, "size": "sm", "color": C_TEXT_SOFT,
+             "align": "center"},
+        ]
+    else:
+        rows = []
+        for w in workouts:
+            n_items = len(w.get("items", []) or [])
+            rows.append({
+                "type": "box", "layout": "horizontal", "spacing": "sm",
+                "contents": [
+                    {"type": "box", "layout": "vertical", "flex": 5,
+                     "contents": [
+                         {"type": "text", "text": f"🏃 {w['name']}",
+                          "size": "sm", "weight": "bold",
+                          "color": C_TEXT_DARK, "wrap": True},
+                         {"type": "text", "text": f"{n_items} 個項目",
+                          "size": "xs", "color": C_TEXT_SOFT,
+                          "margin": "xs"},
+                     ]},
+                    {"type": "button", "style": "primary",
+                     "color": COLOR_DIET, "height": "sm", "flex": 2,
+                     "action": {"type": "postback", "label": "查看",
+                                "data": f"action=ccw_view&id={w['id']}",
+                                "displayText": f"看 {w['name']}"}},
+                ],
+            })
+            rows.append({"type": "separator", "color": C_DIVIDER})
+        body_contents = rows[:-1]
+
+    bubble = {
+        "type": "bubble", "size": "mega",
+        "header": {
+            "type": "box", "layout": "vertical",
+            "backgroundColor": COLOR_DIET, "paddingAll": "20px", "spacing": "xs",
+            "contents": [
+                {"type": "text", "text": "🏃 我的有氧自訂菜單",
+                 "color": "#FFFFFF", "weight": "bold", "size": "lg"},
+                {"type": "text",
+                 "text": f"{len(workouts)}/{MAX_CUSTOM_WORKOUTS_PER_USER} 套",
+                 "color": "#FFFFFF", "size": "sm", "margin": "sm"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "md",
+            "paddingAll": "16px",
+            "contents": body_contents,
+        },
+        "footer": {
+            "type": "box", "layout": "vertical",
+            "spacing": "sm", "paddingAll": "12px",
+            "contents": [
+                {"type": "button", "style": "primary",
+                 "color": COLOR_DIET, "height": "sm",
+                 "action": {"type": "message", "label": "+ 建立新菜單",
+                            "text": "建立自訂有氧菜單"}},
+            ],
+        },
+    }
+    return _flex("我的有氧自訂菜單", bubble)
+
+
+def cardio_custom_workout_card_flex(workout: dict) -> FlexMessage:
+    """單套有氧自訂菜單詳細卡。"""
+    items = workout.get("items", []) or []
+    rows = []
+    for it in items:
+        rows.append({
+            "type": "box", "layout": "horizontal", "spacing": "sm",
+            "contents": [
+                {"type": "text",
+                 "text": it.get("exercise", ""),
+                 "size": "sm", "flex": 4, "wrap": True,
+                 "color": C_TEXT_DARK},
+                {"type": "text",
+                 "text": it.get("duration", ""),
+                 "size": "xs", "flex": 5, "align": "end",
+                 "weight": "bold", "color": COLOR_DIET, "wrap": True},
+            ],
+        })
+
+    bubble = {
+        "type": "bubble", "size": "mega",
+        "header": {
+            "type": "box", "layout": "vertical",
+            "backgroundColor": COLOR_DIET, "paddingAll": "20px", "spacing": "xs",
+            "contents": [
+                {"type": "text", "text": f"🏃 {workout['name']}",
+                 "color": "#FFFFFF", "weight": "bold", "size": "xl"},
+                {"type": "text", "text": f"{len(items)} 個項目",
+                 "color": "#FFFFFF", "size": "sm", "margin": "sm"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "sm",
+            "paddingAll": "16px",
+            "contents": rows or [
+                {"type": "text", "text": "（無項目）", "size": "sm",
+                 "color": C_TEXT_SOFT, "align": "center"},
+            ],
+        },
+        "footer": {
+            "type": "box", "layout": "vertical", "spacing": "sm",
+            "paddingAll": "12px",
+            "contents": [
+                {"type": "button", "style": "primary",
+                 "color": COLOR_DIET, "height": "sm",
+                 "action": {"type": "message", "label": "⏱️ 開始打卡",
+                            "text": "有氧紀錄"}},
+                {"type": "button", "style": "secondary", "height": "sm",
+                 "action": {"type": "postback",
+                            "label": "🗑️ 刪除這套",
+                            "data": f"action=ccw_delete&id={workout['id']}",
+                            "displayText": f"刪除「{workout['name']}」"}},
+            ],
+        },
+    }
+    return _flex(workout["name"], bubble)
+
+
+def _cardio_custom_intro_card() -> dict:
+    """燃脂菜單 Carousel 最後一張：有氧自訂菜單入口。"""
+    return {
+        "type": "bubble", "size": "kilo",
+        "hero": {
+            "type": "box", "layout": "vertical",
+            "backgroundColor": COLOR_DIET,
+            "paddingAll": "40px", "spacing": "md",
+            "contents": [
+                {"type": "text", "text": "🛠️", "size": "5xl",
+                 "align": "center", "color": "#FFFFFF"},
+                {"type": "text", "text": "自訂菜單",
+                 "weight": "bold", "size": "xl", "color": "#FFFFFF",
+                 "align": "center", "margin": "md"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "sm",
+            "paddingAll": "16px",
+            "contents": [
+                {"type": "text",
+                 "text": "用你自己的有氧菜單訓練",
+                 "size": "sm", "weight": "bold", "color": C_TEXT_DARK,
+                 "align": "center"},
+                {"type": "text",
+                 "text": "現有 5 套不夠用？\n建立自己的，最多 5 套。",
+                 "wrap": True, "size": "xs", "color": C_TEXT_SOFT,
+                 "align": "center", "margin": "sm"},
+            ],
+        },
+        "footer": {
+            "type": "box", "layout": "vertical",
+            "spacing": "sm", "paddingAll": "12px",
+            "contents": [
+                {"type": "button", "style": "primary",
+                 "color": COLOR_DIET, "height": "sm",
+                 "action": {"type": "message", "label": "🏃 我的有氧菜單",
+                            "text": "自訂有氧菜單"}},
+                {"type": "button", "style": "link", "height": "sm",
+                 "action": {"type": "message", "label": "+ 建立新菜單",
+                            "text": "建立自訂有氧菜單"}},
+            ],
+        },
     }
 
 
@@ -3777,6 +3992,122 @@ def handle_custom_workout_create(user_id: str, text: str,
         return
 
 
+def show_cardio_custom_workouts(user_id: str, reply_token: str) -> None:
+    workouts = get_user_custom_workouts(user_id, category="cardio")
+    reply(reply_token, [cardio_custom_workouts_overview_flex(workouts)])
+
+
+def start_cardio_workout_create(user_id: str, reply_token: str) -> None:
+    workouts = get_user_custom_workouts(user_id, category="cardio")
+    if len(workouts) >= MAX_CUSTOM_WORKOUTS_PER_USER:
+        reply_text(
+            reply_token,
+            f"⚠️ 你已有 {len(workouts)} 套有氧自訂菜單，達上限 "
+            f"{MAX_CUSTOM_WORKOUTS_PER_USER} 套\n"
+            "請先刪除一套再建立新的。",
+        )
+        return
+    set_state(user_id, "cardio_workout_create", "name", {})
+    reply_text(
+        reply_token,
+        "🛠️ 建立自訂有氧菜單\n\n"
+        f"先幫菜單取個名（≤ {MAX_NAME_LEN} 字）\n"
+        "例：晨跑搭配、燃脂日、Zumba 45 分\n\n"
+        "中途隨時打「取消」離開",
+    )
+
+
+def handle_cardio_workout_create(user_id: str, text: str,
+                                  reply_token: str, state: dict) -> None:
+    step = state["step"]
+    data = state["data"] or {}
+
+    if text in ("取消", "cancel"):
+        clear_state(user_id)
+        reply_text(reply_token, "已取消建立有氧自訂菜單。")
+        return
+
+    if step == "name":
+        name = text.strip()
+        if not name or len(name) > MAX_NAME_LEN:
+            reply_text(reply_token,
+                       f"名稱要 1-{MAX_NAME_LEN} 字，請再打一次")
+            return
+        data["name"] = name
+        data["items_buffer"] = []
+        set_state(user_id, "cardio_workout_create", "items", data)
+        reply_text(
+            reply_token,
+            f"OK 菜單名：「{name}」\n\n"
+            f"🏃 輸入動作清單（最多 {MAX_ITEMS_PER_CUSTOM} 個）\n\n"
+            "格式「動作名 時長」（推薦用「｜」分隔）\n"
+            "可一行一筆 / 多筆用 / 或換行分隔\n\n"
+            "例 1（推薦）：\n"
+            "burpee｜30秒×4輪\n"
+            "登山者｜30秒×4輪\n"
+            "慢跑｜30分鐘\n\n"
+            "例 2（簡寫）：\n"
+            "burpee 30秒×4輪\n"
+            "慢跑 30分鐘\n\n"
+            "打完輸入「完成」儲存、「取消」離開",
+        )
+        return
+
+    if step == "items":
+        if text in ("完成", "done", "結束"):
+            items = data.get("items_buffer") or []
+            if not items:
+                reply_text(reply_token,
+                           "還沒輸入任何動作，先輸入再打「完成」")
+                return
+            insert_custom_workout(user_id, data["name"], items, category="cardio")
+            clear_state(user_id)
+            summary = "\n".join(
+                f"  {i+1}. {it['exercise']} ・{it['duration']}"
+                for i, it in enumerate(items)
+            )
+            reply_text(
+                reply_token,
+                f"✅ 已建立「{data['name']}」\n\n{summary}\n\n"
+                "輸入「自訂有氧菜單」查看",
+                qr(("🏃 查看", "自訂有氧菜單"),
+                   ("⏱️ 有氧紀錄", "有氧紀錄")),
+            )
+            return
+
+        try:
+            new_items = parse_cardio_workout_items(text)
+        except ValueError as exc:
+            reply_text(reply_token,
+                       f"❌ {exc}\n\n再試一次，或打「取消」")
+            return
+
+        existing = data.get("items_buffer") or []
+        if len(existing) + len(new_items) > MAX_ITEMS_PER_CUSTOM:
+            reply_text(
+                reply_token,
+                f"動作總數會超過 {MAX_ITEMS_PER_CUSTOM} 個"
+                f"（已有 {len(existing)}，再加 {len(new_items)} 個）\n"
+                "請少加幾個或直接打「完成」",
+            )
+            return
+
+        merged = existing + new_items
+        data["items_buffer"] = merged
+        set_state(user_id, "cardio_workout_create", "items", data)
+        summary = "\n".join(
+            f"  {i+1}. {it['exercise']} ・{it['duration']}"
+            for i, it in enumerate(merged)
+        )
+        reply_text(
+            reply_token,
+            f"目前 {len(merged)}/{MAX_ITEMS_PER_CUSTOM} 個動作：\n\n"
+            f"{summary}\n\n"
+            "繼續加動作 / 打「完成」儲存 / 「取消」離開",
+        )
+        return
+
+
 def start_strength_log(user_id: str, reply_token: str) -> None:
     """力量紀錄精靈：自由輸入動作名稱 → 重量 → 次數 → 組數。"""
     set_state(user_id, "strength_log", "exercise", {})
@@ -4318,6 +4649,9 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
         if flow == "custom_workout_create":
             handle_custom_workout_create(user_id, text, reply_token, state)
             return
+        if flow == "cardio_workout_create":
+            handle_cardio_workout_create(user_id, text, reply_token, state)
+            return
         if flow == "coach_chat":
             handle_coach_chat(user_id, text, reply_token, state)
             return
@@ -4407,6 +4741,12 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
         return
     if text in ("建立自訂菜單", "新增自訂菜單", "建立菜單"):
         start_custom_workout_create(user_id, reply_token)
+        return
+    if text in ("自訂有氧菜單", "🏃 自訂有氧菜單", "我的有氧菜單"):
+        show_cardio_custom_workouts(user_id, reply_token)
+        return
+    if text in ("建立自訂有氧菜單", "新增自訂有氧菜單", "建立有氧菜單"):
+        start_cardio_workout_create(user_id, reply_token)
         return
     if text in ("減脂", "✂️ 減脂", "減脂專區"):
         cut_section_menu(reply_token)
@@ -4637,10 +4977,41 @@ def handle_postback(event):
                 reply_text(reply_token, "找不到這套自訂菜單 🤔")
                 return
             delete_custom_workout(wid, user_id)
-            workouts = get_user_custom_workouts(user_id)
+            workouts = get_user_custom_workouts(user_id, category="strength")
             reply(reply_token, [
                 TextMessage(text=f"🗑️ 已刪除「{workout['name']}」"),
                 custom_workouts_overview_flex(workouts),
+            ])
+            return
+
+        if action == "ccw_view":
+            try:
+                wid = int(params.get("id", "0"))
+            except ValueError:
+                reply_text(reply_token, "找不到這套有氧自訂菜單 🤔")
+                return
+            workout = get_custom_workout(wid, user_id)
+            if not workout:
+                reply_text(reply_token, "找不到這套有氧自訂菜單 🤔")
+                return
+            reply(reply_token, [cardio_custom_workout_card_flex(workout)])
+            return
+
+        if action == "ccw_delete":
+            try:
+                wid = int(params.get("id", "0"))
+            except ValueError:
+                reply_text(reply_token, "找不到這套有氧自訂菜單 🤔")
+                return
+            workout = get_custom_workout(wid, user_id)
+            if not workout:
+                reply_text(reply_token, "找不到這套有氧自訂菜單 🤔")
+                return
+            delete_custom_workout(wid, user_id)
+            workouts = get_user_custom_workouts(user_id, category="cardio")
+            reply(reply_token, [
+                TextMessage(text=f"🗑️ 已刪除「{workout['name']}」"),
+                cardio_custom_workouts_overview_flex(workouts),
             ])
             return
 
