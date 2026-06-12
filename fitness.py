@@ -363,6 +363,42 @@ def get_all_lifts_overview(user_id: str, limit: int = 12) -> dict:
 
 
 @_sb_retry
+def get_user_custom_workouts(user_id: str) -> list[dict]:
+    res = (
+        supabase.table("custom_workouts").select("*")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return res.data or []
+
+
+@_sb_retry
+def get_custom_workout(workout_id: int, user_id: str) -> Optional[dict]:
+    res = (
+        supabase.table("custom_workouts").select("*")
+        .eq("id", workout_id).eq("user_id", user_id)
+        .execute()
+    )
+    return res.data[0] if res.data else None
+
+
+@_sb_retry
+def insert_custom_workout(user_id: str, name: str, items: list[dict]) -> dict:
+    res = supabase.table("custom_workouts").insert({
+        "user_id": user_id, "name": name, "items": items,
+    }).execute()
+    return res.data[0] if res.data else {}
+
+
+@_sb_retry
+def delete_custom_workout(workout_id: int, user_id: str) -> int:
+    res = supabase.table("custom_workouts").delete()\
+        .eq("id", workout_id).eq("user_id", user_id).execute()
+    return len(res.data or [])
+
+
+@_sb_retry
 def users_with_notify_on(key: str) -> list[str]:
     """回傳該通知開著的所有 user_id。"""
     if key not in NOTIFY_KEYS:
@@ -1741,10 +1777,12 @@ def _muscle_img_url(img_key: str) -> str:
 
 
 def training_menu_flex() -> FlexMessage:
-    """5 套訓練菜單 Carousel。"""
+    """5 套訓練菜單 Carousel + 最後一張自訂菜單入口。"""
+    contents = [_training_card(k, v) for k, v in WORKOUT_MENUS.items()]
+    contents.append(_custom_workout_intro_card())
     return _flex("訓練菜單庫", {
         "type": "carousel",
-        "contents": [_training_card(k, v) for k, v in WORKOUT_MENUS.items()],
+        "contents": contents,
     })
 
 
@@ -1861,6 +1899,222 @@ def exercise_detail_flex(ex_id: str) -> FlexMessage:
             "contents": body_contents,
         },
     })
+
+
+# --- 自訂菜單 ---
+
+MAX_CUSTOM_WORKOUTS_PER_USER = 5
+MAX_ITEMS_PER_CUSTOM = 8
+MAX_NAME_LEN = 20
+MAX_EXERCISE_LEN = 30
+
+
+def parse_custom_workout_items(text: str) -> list[dict]:
+    """解析使用者輸入的動作清單。
+
+    支援格式：
+    - 一行一筆：「深蹲 4 8」
+    - 多筆用 / | 分隔：「深蹲 4 8 / 硬舉 4 8」
+    - 每筆：動作名 + 組 + 次（空白分隔，最後 2 個是數字）
+
+    失敗回拋 ValueError 帶友善訊息。
+    """
+    normalized = (
+        text.replace("|", "\n").replace("/", "\n").replace("｜", "\n")
+    )
+    lines = [ln.strip() for ln in normalized.splitlines() if ln.strip()]
+    items = []
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 3:
+            raise ValueError(f"「{line}」格式不對\n要：動作名 組 次")
+        try:
+            reps = int(parts[-1])
+            sets = int(parts[-2])
+        except ValueError:
+            raise ValueError(f"「{line}」最後兩個要是數字（組 次）")
+        exercise = " ".join(parts[:-2]).strip()
+        if not exercise:
+            raise ValueError("動作名不能空")
+        if len(exercise) > MAX_EXERCISE_LEN:
+            raise ValueError(f"動作名「{exercise}」超過 {MAX_EXERCISE_LEN} 字")
+        if sets < 1 or sets > 20:
+            raise ValueError(f"組數 {sets} 不在 1-20")
+        if reps < 1 or reps > 50:
+            raise ValueError(f"次數 {reps} 不在 1-50")
+        items.append({"exercise": exercise, "sets": sets, "reps": reps})
+    return items
+
+
+def custom_workouts_overview_flex(workouts: list[dict]) -> FlexMessage:
+    """所有自訂菜單列表 Flex。空 state 顯示引導。"""
+    if not workouts:
+        body_contents = [
+            {"type": "text",
+             "text": "還沒建立任何自訂菜單\n打「建立自訂菜單」開始 ✨",
+             "wrap": True, "size": "sm", "color": C_TEXT_SOFT,
+             "align": "center"},
+        ]
+    else:
+        rows = []
+        for w in workouts:
+            n_items = len(w.get("items", []) or [])
+            rows.append({
+                "type": "box", "layout": "horizontal", "spacing": "sm",
+                "contents": [
+                    {"type": "box", "layout": "vertical", "flex": 5,
+                     "contents": [
+                         {"type": "text", "text": f"🛠️ {w['name']}",
+                          "size": "sm", "weight": "bold",
+                          "color": C_TEXT_DARK, "wrap": True},
+                         {"type": "text", "text": f"{n_items} 個動作",
+                          "size": "xs", "color": C_TEXT_SOFT,
+                          "margin": "xs"},
+                     ]},
+                    {"type": "button", "style": "primary",
+                     "color": C_PRIMARY, "height": "sm", "flex": 2,
+                     "action": {"type": "postback", "label": "查看",
+                                "data": f"action=cw_view&id={w['id']}",
+                                "displayText": f"看 {w['name']}"}},
+                ],
+            })
+            rows.append({"type": "separator", "color": C_DIVIDER})
+        body_contents = rows[:-1]
+
+    bubble = {
+        "type": "bubble", "size": "mega",
+        "header": {
+            "type": "box", "layout": "vertical",
+            "backgroundColor": C_PRIMARY, "paddingAll": "20px", "spacing": "xs",
+            "contents": [
+                {"type": "text", "text": "🛠️ 我的自訂菜單",
+                 "color": "#FFFFFF", "weight": "bold", "size": "lg"},
+                {"type": "text",
+                 "text": f"{len(workouts)}/{MAX_CUSTOM_WORKOUTS_PER_USER} 套",
+                 "color": "#FFFFFF", "size": "sm", "margin": "sm"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "md",
+            "paddingAll": "16px",
+            "contents": body_contents,
+        },
+        "footer": {
+            "type": "box", "layout": "vertical",
+            "spacing": "sm", "paddingAll": "12px",
+            "contents": [
+                {"type": "button", "style": "primary",
+                 "color": C_PRIMARY, "height": "sm",
+                 "action": {"type": "message", "label": "+ 建立新菜單",
+                            "text": "建立自訂菜單"}},
+            ],
+        },
+    }
+    return _flex("我的自訂菜單", bubble)
+
+
+def custom_workout_card_flex(workout: dict) -> FlexMessage:
+    """單套自訂菜單詳細卡。"""
+    items = workout.get("items", []) or []
+    rows = []
+    for it in items:
+        rows.append({
+            "type": "box", "layout": "horizontal", "spacing": "sm",
+            "contents": [
+                {"type": "text",
+                 "text": it.get("exercise", ""),
+                 "size": "sm", "flex": 7, "wrap": True,
+                 "color": C_TEXT_DARK},
+                {"type": "text",
+                 "text": f"{it.get('sets', 0)}×{it.get('reps', 0)}",
+                 "size": "sm", "flex": 2, "align": "end",
+                 "weight": "bold", "color": C_PRIMARY},
+            ],
+        })
+
+    bubble = {
+        "type": "bubble", "size": "mega",
+        "header": {
+            "type": "box", "layout": "vertical",
+            "backgroundColor": C_PRIMARY, "paddingAll": "20px", "spacing": "xs",
+            "contents": [
+                {"type": "text", "text": f"🛠️ {workout['name']}",
+                 "color": "#FFFFFF", "weight": "bold", "size": "xl"},
+                {"type": "text", "text": f"{len(items)} 個動作",
+                 "color": "#FFFFFF", "size": "sm", "margin": "sm"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "sm",
+            "paddingAll": "16px",
+            "contents": rows or [
+                {"type": "text", "text": "（無動作）", "size": "sm",
+                 "color": C_TEXT_SOFT, "align": "center"},
+            ],
+        },
+        "footer": {
+            "type": "box", "layout": "vertical", "spacing": "sm",
+            "paddingAll": "12px",
+            "contents": [
+                {"type": "button", "style": "primary",
+                 "color": C_PRIMARY, "height": "sm",
+                 "action": {"type": "message", "label": "✏️ 力量紀錄",
+                            "text": "力量紀錄"}},
+                {"type": "button", "style": "secondary", "height": "sm",
+                 "action": {"type": "postback",
+                            "label": "🗑️ 刪除這套",
+                            "data": f"action=cw_delete&id={workout['id']}",
+                            "displayText": f"刪除「{workout['name']}」"}},
+            ],
+        },
+    }
+    return _flex(workout["name"], bubble)
+
+
+def _custom_workout_intro_card() -> dict:
+    """訓練菜單 Carousel 最後一張：自訂菜單入口（bubble dict 直接給 carousel 用）。"""
+    return {
+        "type": "bubble", "size": "kilo",
+        "hero": {
+            "type": "box", "layout": "vertical",
+            "backgroundColor": C_PRIMARY,
+            "paddingAll": "40px", "spacing": "md",
+            "contents": [
+                {"type": "text", "text": "🛠️", "size": "5xl",
+                 "align": "center", "color": "#FFFFFF"},
+                {"type": "text", "text": "自訂菜單",
+                 "weight": "bold", "size": "xl", "color": "#FFFFFF",
+                 "align": "center", "margin": "md"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "sm",
+            "paddingAll": "16px",
+            "contents": [
+                {"type": "text",
+                 "text": "用你自己的菜單訓練",
+                 "size": "sm", "weight": "bold", "color": C_TEXT_DARK,
+                 "align": "center"},
+                {"type": "text",
+                 "text": "現有的訓練菜單不夠用？\n建立自己的，最多 5 套。",
+                 "wrap": True, "size": "xs", "color": C_TEXT_SOFT,
+                 "align": "center", "margin": "sm"},
+            ],
+        },
+        "footer": {
+            "type": "box", "layout": "vertical",
+            "spacing": "sm", "paddingAll": "12px",
+            "contents": [
+                {"type": "button", "style": "primary",
+                 "color": C_PRIMARY, "height": "sm",
+                 "action": {"type": "message", "label": "🛠️ 我的自訂菜單",
+                            "text": "自訂菜單"}},
+                {"type": "button", "style": "link", "height": "sm",
+                 "action": {"type": "message", "label": "+ 建立新菜單",
+                            "text": "建立自訂菜單"}},
+            ],
+        },
+    }
 
 
 def menu_detail_carousel_flex(menu_key: str) -> FlexMessage:
@@ -2469,6 +2723,123 @@ def show_strength_overview(user_id: str, reply_token: str) -> None:
     reply(reply_token, [strength_overview_flex(records)])
 
 
+def show_custom_workouts(user_id: str, reply_token: str) -> None:
+    """列出該使用者所有自訂菜單。"""
+    workouts = get_user_custom_workouts(user_id)
+    reply(reply_token, [custom_workouts_overview_flex(workouts)])
+
+
+def start_custom_workout_create(user_id: str, reply_token: str) -> None:
+    """開始建立自訂菜單精靈。"""
+    workouts = get_user_custom_workouts(user_id)
+    if len(workouts) >= MAX_CUSTOM_WORKOUTS_PER_USER:
+        reply_text(
+            reply_token,
+            f"⚠️ 你已有 {len(workouts)} 套自訂菜單，達上限 "
+            f"{MAX_CUSTOM_WORKOUTS_PER_USER} 套\n"
+            "請先刪除一套再建立新的。",
+        )
+        return
+    set_state(user_id, "custom_workout_create", "name", {})
+    reply_text(
+        reply_token,
+        "🛠️ 建立自訂菜單\n\n"
+        f"先幫菜單取個名（≤ {MAX_NAME_LEN} 字）\n"
+        "例：腿日加強、推日、家裡訓練\n\n"
+        "想中途離開隨時輸入「取消」",
+    )
+
+
+def handle_custom_workout_create(user_id: str, text: str,
+                                 reply_token: str, state: dict) -> None:
+    step = state["step"]
+    data = state["data"] or {}
+
+    if text in ("取消", "cancel"):
+        clear_state(user_id)
+        reply_text(reply_token, "已取消建立自訂菜單。")
+        return
+
+    if step == "name":
+        name = text.strip()
+        if not name or len(name) > MAX_NAME_LEN:
+            reply_text(reply_token,
+                       f"名稱要 1-{MAX_NAME_LEN} 字，請再打一次")
+            return
+        data["name"] = name
+        data["items_buffer"] = []
+        set_state(user_id, "custom_workout_create", "items", data)
+        reply_text(
+            reply_token,
+            f"OK 菜單名：「{name}」\n\n"
+            f"🏋️ 接著輸入動作清單（最多 {MAX_ITEMS_PER_CUSTOM} 個）\n\n"
+            "格式「動作名 組 次」（空白分隔）\n"
+            "可以一次貼多筆，用 / 或換行分隔\n\n"
+            "例 1（一行一筆）：\n"
+            "深蹲 4 8\n"
+            "羅馬尼亞硬舉 4 8\n"
+            "弓箭步 3 10\n\n"
+            "例 2（一行貼完）：\n"
+            "深蹲 4 8 / 硬舉 4 8 / 弓箭步 3 10\n\n"
+            "打完輸入「完成」儲存、「取消」離開",
+        )
+        return
+
+    if step == "items":
+        if text in ("完成", "done", "結束"):
+            items = data.get("items_buffer") or []
+            if not items:
+                reply_text(reply_token,
+                           "還沒輸入任何動作，先輸入再打「完成」")
+                return
+            insert_custom_workout(user_id, data["name"], items)
+            clear_state(user_id)
+            summary = "\n".join(
+                f"  {i+1}. {it['exercise']} {it['sets']}×{it['reps']}"
+                for i, it in enumerate(items)
+            )
+            reply_text(
+                reply_token,
+                f"✅ 已建立「{data['name']}」\n\n{summary}\n\n"
+                "輸入「自訂菜單」查看所有菜單",
+                qr(("🛠️ 查看", "自訂菜單"),
+                   ("✏️ 力量紀錄", "力量紀錄")),
+            )
+            return
+
+        try:
+            new_items = parse_custom_workout_items(text)
+        except ValueError as exc:
+            reply_text(reply_token,
+                       f"❌ {exc}\n\n再試一次，或打「取消」")
+            return
+
+        existing = data.get("items_buffer") or []
+        if len(existing) + len(new_items) > MAX_ITEMS_PER_CUSTOM:
+            reply_text(
+                reply_token,
+                f"動作總數會超過 {MAX_ITEMS_PER_CUSTOM} 個"
+                f"（已有 {len(existing)}，再加 {len(new_items)} 個）\n"
+                "請少加幾個或直接打「完成」",
+            )
+            return
+
+        merged = existing + new_items
+        data["items_buffer"] = merged
+        set_state(user_id, "custom_workout_create", "items", data)
+        summary = "\n".join(
+            f"  {i+1}. {it['exercise']} {it['sets']}×{it['reps']}"
+            for i, it in enumerate(merged)
+        )
+        reply_text(
+            reply_token,
+            f"目前 {len(merged)}/{MAX_ITEMS_PER_CUSTOM} 個動作：\n\n"
+            f"{summary}\n\n"
+            "繼續加動作 / 打「完成」儲存 / 「取消」離開",
+        )
+        return
+
+
 def start_strength_log(user_id: str, reply_token: str) -> None:
     """力量紀錄精靈：自由輸入動作名稱 → 重量 → 次數 → 組數。"""
     set_state(user_id, "strength_log", "exercise", {})
@@ -2876,6 +3247,9 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
         if flow == "strength_log":
             handle_strength_log(user_id, text, reply_token, state)
             return
+        if flow == "custom_workout_create":
+            handle_custom_workout_create(user_id, text, reply_token, state)
+            return
 
     # 3) 沒有狀態 → 走頂層指令
     # 個人資料
@@ -2953,6 +3327,12 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
         return
     if text in ("力量紀錄", "✏️ 力量紀錄", "紀錄力量"):
         start_strength_log(user_id, reply_token)
+        return
+    if text in ("自訂菜單", "🛠️ 自訂菜單", "我的菜單", "我的自訂菜單"):
+        show_custom_workouts(user_id, reply_token)
+        return
+    if text in ("建立自訂菜單", "新增自訂菜單", "建立菜單"):
+        start_custom_workout_create(user_id, reply_token)
         return
     if text in ("減脂", "✂️ 減脂", "減脂專區"):
         cut_section_placeholder(reply_token)
@@ -3097,6 +3477,37 @@ def handle_postback(event):
                 reply_text(reply_token, "找不到這個菜單 🤔")
                 return
             reply(reply_token, [menu_detail_carousel_flex(menu_key)])
+            return
+
+        if action == "cw_view":
+            try:
+                wid = int(params.get("id", "0"))
+            except ValueError:
+                reply_text(reply_token, "找不到這套自訂菜單 🤔")
+                return
+            workout = get_custom_workout(wid, user_id)
+            if not workout:
+                reply_text(reply_token, "找不到這套自訂菜單 🤔")
+                return
+            reply(reply_token, [custom_workout_card_flex(workout)])
+            return
+
+        if action == "cw_delete":
+            try:
+                wid = int(params.get("id", "0"))
+            except ValueError:
+                reply_text(reply_token, "找不到這套自訂菜單 🤔")
+                return
+            workout = get_custom_workout(wid, user_id)
+            if not workout:
+                reply_text(reply_token, "找不到這套自訂菜單 🤔")
+                return
+            delete_custom_workout(wid, user_id)
+            workouts = get_user_custom_workouts(user_id)
+            reply(reply_token, [
+                TextMessage(text=f"🗑️ 已刪除「{workout['name']}」"),
+                custom_workouts_overview_flex(workouts),
+            ])
             return
 
         if action == "notify_toggle":

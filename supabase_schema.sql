@@ -89,7 +89,19 @@ create index if not exists strength_logs_user_ex_idx
     on strength_logs(user_id, exercise, recorded_at desc);
 
 
--- 6. 反思紀錄
+-- 6. 自訂訓練菜單（使用者建立）
+create table if not exists custom_workouts (
+    id bigserial primary key,
+    user_id text not null,
+    name text not null,
+    items jsonb not null,            -- [{exercise, sets, reps}, ...]
+    created_at timestamptz default now()
+);
+create index if not exists custom_workouts_user_idx
+    on custom_workouts(user_id, created_at desc);
+
+
+-- 7. 反思紀錄
 create table if not exists reflections (
     id bigserial primary key,
     user_id text not null,
