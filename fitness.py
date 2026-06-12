@@ -45,6 +45,7 @@ from linebot.v3.messaging import (
     QuickReply,
     QuickReplyItem,
     ReplyMessageRequest,
+    Sender,
     TextMessage,
 )
 from linebot.v3.webhooks import (
@@ -73,6 +74,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SPACE_HOST = os.getenv("SPACE_HOST", "daniel931101-sculinebot.hf.space")
 
 MUSCLE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "muscles")
+AVATAR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "avatars")
 
 GEMINI_MODEL = "gemini-3.1-flash-lite"
 
@@ -3046,6 +3048,14 @@ COACH_MAX_TURNS = 20
 COACH_EXIT_WORDS = {"結束", "離開", "退出", "結束對話", "主選單", "選單", "menu"}
 
 
+def coach_sender() -> Sender:
+    """AI 教練專用 sender：自訂頭貼 + 名稱（限 20 字內）。"""
+    return Sender(
+        name="AI 教練",
+        icon_url=f"https://{SPACE_HOST}/avatars/ai_coach.png",
+    )
+
+
 def coach_disclaimer_flex() -> FlexMessage:
     body = {
         "type": "bubble",
@@ -3897,20 +3907,25 @@ def start_ai_coach(user_id: str, reply_token: str) -> None:
 
 
 def _enter_coach_chat(user_id: str, reply_token: str) -> None:
-    """正式進入聊天模式：設 state、送歡迎訊息。"""
+    """正式進入聊天模式：設 state、送歡迎訊息（掛教練頭貼）。"""
     set_state(user_id, "coach_chat", "active", {"history": [], "turn": 0})
-    reply_text(
-        reply_token,
+    welcome = (
         "🤖 嗨，我是你的 AI 健身教練。\n"
         "想聊動作姿勢、訓練計畫、飲食增肌減脂，都可以問我。\n\n"
-        "🚪 想結束對話打「結束」或「主選單」",
-        qr(
-            ("📝 問動作姿勢", "我想問動作姿勢相關的問題"),
-            ("🍱 問飲食營養", "我想問飲食營養相關的問題"),
-            ("📋 問訓練計畫", "我想問訓練計畫相關的問題"),
-            ("🚪 結束", "結束"),
-        ),
+        "🚪 想結束對話打「結束」或「主選單」"
     )
+    reply(reply_token, [
+        TextMessage(
+            text=welcome,
+            sender=coach_sender(),
+            quick_reply=qr(
+                ("📝 問動作姿勢", "我想問動作姿勢相關的問題"),
+                ("🍱 問飲食營養", "我想問飲食營養相關的問題"),
+                ("📋 問訓練計畫", "我想問訓練計畫相關的問題"),
+                ("🚪 結束", "結束"),
+            ),
+        ),
+    ])
 
 
 def handle_coach_chat(user_id: str, text: str,
@@ -3920,8 +3935,11 @@ def handle_coach_chat(user_id: str, text: str,
     if text.strip() in COACH_EXIT_WORDS:
         clear_state(user_id)
         reply(reply_token, [
-            TextMessage(text="🤖 對話結束，動起來吧 💪",
-                        quick_reply=qr(("📋 主選單", "選單"))),
+            TextMessage(
+                text="🤖 對話結束，動起來吧 💪",
+                sender=coach_sender(),
+                quick_reply=qr(("📋 主選單", "選單")),
+            ),
         ])
         return
 
@@ -3932,12 +3950,14 @@ def handle_coach_chat(user_id: str, text: str,
     # 回合上限
     if turn >= COACH_MAX_TURNS:
         clear_state(user_id)
-        reply_text(
-            reply_token,
-            f"🤖 我們聊滿 {COACH_MAX_TURNS} 輪了，今天聊夠多 👍\n"
-            "去動一下吧，需要再打「AI教練」回來聊。",
-            qr(("📋 主選單", "選單")),
-        )
+        reply(reply_token, [
+            TextMessage(
+                text=f"🤖 我們聊滿 {COACH_MAX_TURNS} 輪了，今天聊夠多 👍\n"
+                     "去動一下吧，需要再打「AI教練」回來聊。",
+                sender=coach_sender(),
+                quick_reply=qr(("📋 主選單", "選單")),
+            ),
+        ])
         return
 
     # 丟給 Gemini
@@ -3954,11 +3974,13 @@ def handle_coach_chat(user_id: str, text: str,
     remaining = COACH_MAX_TURNS - (turn + 1)
     footer_hint = f"\n\n💬 剩 {remaining} 輪 · 打「結束」可離開" if remaining <= 5 else ""
 
-    reply_text(
-        reply_token,
-        f"{answer}{footer_hint}",
-        qr(("🚪 結束對話", "結束")),
-    )
+    reply(reply_token, [
+        TextMessage(
+            text=f"{answer}{footer_hint}",
+            sender=coach_sender(),
+            quick_reply=qr(("🚪 結束對話", "結束")),
+        ),
+    ])
 
 
 def start_workout_log(user_id: str, reply_token: str) -> None:
@@ -4766,6 +4788,12 @@ def home():
 def serve_muscle(filename):
     """提供肌肉剪影 PNG 給 Flex Message 用。"""
     return send_from_directory(MUSCLE_DIR, filename)
+
+
+@app.route("/avatars/<path:filename>")
+def serve_avatar(filename):
+    """提供 AI 教練頭貼等 PNG。"""
+    return send_from_directory(AVATAR_DIR, filename)
 
 
 @app.route("/", methods=["POST"])
