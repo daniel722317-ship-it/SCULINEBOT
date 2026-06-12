@@ -366,6 +366,123 @@ def get_all_lifts_overview(user_id: str, limit: int = 12) -> dict:
 
 
 @_sb_retry
+def get_monthly_report(user_id: str, start_date: date, end_date: date) -> dict:
+    """聚合期間內所有打卡紀錄。end_date inclusive。"""
+    start_iso = datetime.combine(start_date, datetime.min.time()).isoformat()
+    end_iso = datetime.combine(end_date + timedelta(days=1),
+                               datetime.min.time()).isoformat()
+
+    # 一次抓 habit_logs（含 water / sleep / workout / stretch / 壞習慣）
+    res_h = (
+        supabase.table("habit_logs")
+        .select("type, amount, quality, recorded_at")
+        .eq("user_id", user_id)
+        .gte("recorded_at", start_iso).lt("recorded_at", end_iso)
+        .execute()
+    )
+
+    # 飲水：總 ml + 達標天數
+    water_total = 0.0
+    water_by_day: dict = {}
+    sleep_records = []
+    workout_count = 0
+    workout_mins = 0.0
+    stretch_count = 0
+
+    for row in (res_h.data or []):
+        t = row.get("type", "")
+        ts = row.get("recorded_at", "")
+        if isinstance(ts, str):
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        else:
+            dt = ts
+        d = dt.astimezone(TPE).date()
+        amt = float(row.get("amount") or 0)
+
+        if t == "water":
+            water_total += amt
+            water_by_day[d] = water_by_day.get(d, 0) + amt
+        elif t == "sleep":
+            sleep_records.append(row.get("quality") or "normal")
+        elif t == "workout":
+            workout_count += 1
+            workout_mins += amt
+        elif t == "stretch":
+            stretch_count += 1
+
+    # 飲水達標天數
+    profile = get_profile(user_id)
+    target = (profile or {}).get("daily_water_ml") or 2000
+    water_days_met = sum(1 for s in water_by_day.values() if s >= target)
+
+    # 睡眠：分組
+    sleep_good = sum(1 for q in sleep_records if q == "good")
+    sleep_normal = sum(1 for q in sleep_records if q == "normal")
+    sleep_bad = sum(1 for q in sleep_records if q == "bad")
+
+    # 力量紀錄
+    res_s = (
+        supabase.table("strength_logs")
+        .select("exercise", count="exact")
+        .eq("user_id", user_id)
+        .gte("recorded_at", start_iso).lt("recorded_at", end_iso)
+        .execute()
+    )
+    strength_count = res_s.count or 0
+    strength_lifts = set(r["exercise"] for r in (res_s.data or []))
+
+    # 反思
+    res_r = (
+        supabase.table("reflections")
+        .select("period")
+        .eq("user_id", user_id)
+        .gte("recorded_at", start_iso).lt("recorded_at", end_iso)
+        .execute()
+    )
+    reflections_by_period: dict = {}
+    for r in (res_r.data or []):
+        p = r.get("period") or ""
+        reflections_by_period[p] = reflections_by_period.get(p, 0) + 1
+    reflections_count = sum(reflections_by_period.values())
+
+    # 目標
+    goal = get_active_goal(user_id)
+
+    return {
+        "water_total_ml": int(water_total),
+        "water_days_met": water_days_met,
+        "sleep_total": len(sleep_records),
+        "sleep_good": sleep_good,
+        "sleep_normal": sleep_normal,
+        "sleep_bad": sleep_bad,
+        "workout_count": workout_count,
+        "workout_mins": int(workout_mins),
+        "stretch_count": stretch_count,
+        "strength_count": strength_count,
+        "strength_lift_set": strength_lifts,
+        "reflections_count": reflections_count,
+        "reflections_by_period": reflections_by_period,
+        "active_goal": goal,
+    }
+
+
+@_sb_retry
+def mark_coach_agreed(user_id: str) -> None:
+    """記錄使用者同意免責聲明的時間。"""
+    supabase.table("profiles").update({
+        "ai_coach_agreed_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.utcnow().isoformat(),
+    }).eq("user_id", user_id).execute()
+
+
+def has_agreed_coach(user_id: str) -> bool:
+    profile = get_profile(user_id)
+    if not profile:
+        return False
+    return profile.get("ai_coach_agreed_at") is not None
+
+
+@_sb_retry
 def get_cardio_overview(user_id: str) -> dict:
     """聚合有氧（type=workout）紀錄：本週/月累計、連續打卡、最近 5 筆。"""
     now_tpe = datetime.now(TPE)
@@ -568,6 +685,62 @@ def claude_ask(prompt: str, system: str = "", max_tokens: int = 1024) -> str:
     except Exception as exc:  # noqa: BLE001
         logger.exception("Gemini error: %s", exc)
         return "（AI 教練暫時無法回應，請稍後再試）"
+
+    html = markdown.markdown(text)
+    return BeautifulSoup(html, "html.parser").get_text().strip()
+
+
+COACH_SYSTEM_PROMPT = (
+    "你是一位資深健身教練，名叫『教練 Bot』。你的專長：\n"
+    "- 動作姿勢與技巧調整（深蹲、硬舉、臥推等所有訓練動作）\n"
+    "- 訓練計畫安排（增肌、減脂、力量、心肺）\n"
+    "- 飲食原則與營養討論（熱量、蛋白質、增肌減脂飲食）\n"
+    "- 增肌減脂策略、撞牆期、訓練周期\n\n"
+    "風格：\n"
+    "- 用繁體中文（台灣用語）回答\n"
+    "- 回答精簡，3-5 句話內，重點清楚\n"
+    "- 友善鼓勵但專業，不要過度奉承\n"
+    "- 不知道就誠實說不知道\n"
+    "- 偶爾用 1-2 個 emoji 點綴即可，不要過度\n\n"
+    "嚴格安全規則：\n"
+    "- 涉及『受傷 / 疼痛 / 疾病 / 藥物 / 暈眩 / 開刀』時，"
+    "強烈建議使用者諮詢『醫師、物理治療師或運動傷害防護員』，並重述這點。\n"
+    "- 不開立任何醫療診斷或處方\n"
+    "- 不推薦特定品牌的保健食品或藥物\n\n"
+    "話題邊界：\n"
+    "- 不討論政治、宗教、感情、八卦、職場、學業等與健身無關的話題\n"
+    "- 使用者問非健身相關問題時，禮貌拒絕並引導回健身：「我是健身教練 Bot，"
+    "這個問題不在我的專業範圍內。要不要聊聊你今天的訓練？」\n\n"
+    "請用此身份回答學員的問題。"
+)
+
+
+def claude_coach_chat(history: list, user_message: str) -> str:
+    """多輪對話：把歷史 + 新訊息丟給 Gemini，回字串答覆。
+
+    history: [{"role": "user"|"model", "text": "..."}, ...]
+    """
+    try:
+        from google.genai.types import GenerateContentConfig
+        contents = []
+        for turn in history:
+            contents.append({
+                "role": turn["role"],
+                "parts": [{"text": turn["text"]}],
+            })
+        contents.append({"role": "user", "parts": [{"text": user_message}]})
+
+        response = gemini_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=contents,
+            config=GenerateContentConfig(
+                system_instruction=COACH_SYSTEM_PROMPT,
+            ),
+        )
+        text = (response.text or "").strip()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Coach chat error: %s", exc)
+        return "（教練暫時無法回應，請稍後再試）"
 
     html = markdown.markdown(text)
     return BeautifulSoup(html, "html.parser").get_text().strip()
@@ -2772,6 +2945,169 @@ def strength_overview_flex(records: dict) -> FlexMessage:
     })
 
 
+def results_flex(report: dict, period_label: str,
+                 next_period_key: str, next_period_label: str) -> FlexMessage:
+    """📊 成果報告 Flex 卡。"""
+
+    # 睡眠詳細
+    sleep_detail = (
+        f"{report['sleep_total']} 天 (好{report['sleep_good']}/普{report['sleep_normal']}/差{report['sleep_bad']})"
+        if report['sleep_total'] > 0 else "尚未紀錄"
+    )
+
+    goal_line = "尚未設定"
+    goal = report.get("active_goal")
+    if goal:
+        desc = (goal.get("description") or "")[:14]
+        deadline_str = goal.get("deadline") or ""
+        if deadline_str:
+            try:
+                d = datetime.strptime(deadline_str, "%Y-%m-%d").date()
+                days = (d - date.today()).days
+                countdown = f" ⏳{days}d" if days > 0 else " 🔔到期"
+                goal_line = desc + countdown
+            except (ValueError, TypeError):
+                goal_line = desc
+        else:
+            goal_line = desc
+
+    rows = [
+        _result_row("💧 飲水",
+                    f"{report['water_total_ml']:,} ml",
+                    f"達標 {report['water_days_met']} 天"),
+        _result_row("🌙 睡眠", sleep_detail, ""),
+        _result_row("⏱️ 有氧 / 運動",
+                    f"{report['workout_count']} 次",
+                    f"{report['workout_mins']} 分鐘"),
+        _result_row("🏋️ 力量",
+                    f"{report['strength_count']} 筆",
+                    f"練了 {len(report['strength_lift_set'])} 個動作"),
+        _result_row("📝 反思",
+                    f"{report['reflections_count']} 篇", ""),
+        _result_row("🎯 目標", goal_line, ""),
+    ]
+    if report["stretch_count"] > 0:
+        rows.insert(3, _result_row("🪑 伸展",
+                                   f"{report['stretch_count']} 次", ""))
+
+    bubble = {
+        "type": "bubble", "size": "mega",
+        "header": {
+            "type": "box", "layout": "vertical",
+            "backgroundColor": "#5DADE2", "paddingAll": "20px", "spacing": "xs",
+            "contents": [
+                {"type": "text", "text": "📊 成果",
+                 "color": "#FFFFFF", "weight": "bold", "size": "xl"},
+                {"type": "text", "text": period_label,
+                 "color": "#FFFFFF", "size": "sm", "margin": "sm"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "lg", "paddingAll": "16px",
+            "contents": rows,
+        },
+        "footer": {
+            "type": "box", "layout": "vertical", "spacing": "sm", "paddingAll": "12px",
+            "contents": [
+                {"type": "button", "style": "secondary", "height": "sm",
+                 "action": {"type": "postback",
+                            "label": f"📅 {next_period_label}",
+                            "data": f"action=results&period={next_period_key}",
+                            "displayText": f"看{next_period_label}成果"}},
+                {"type": "button", "style": "link", "height": "sm",
+                 "action": {"type": "message", "label": "📋 主選單", "text": "選單"}},
+            ],
+        },
+    }
+    return _flex(f"成果 · {period_label}", bubble)
+
+
+def _result_row(label: str, value: str, sub: str) -> dict:
+    contents = [
+        {"type": "box", "layout": "horizontal",
+         "contents": [
+             {"type": "text", "text": label, "size": "sm",
+              "weight": "bold", "color": C_TEXT_DARK, "flex": 3},
+             {"type": "text", "text": value, "size": "sm",
+              "color": C_TEXT_DARK, "weight": "bold",
+              "flex": 4, "align": "end", "wrap": True},
+         ]},
+    ]
+    if sub:
+        contents.append({
+            "type": "text", "text": sub, "size": "xs",
+            "color": C_TEXT_SOFT, "align": "end",
+        })
+    return {"type": "box", "layout": "vertical", "spacing": "xs",
+            "contents": contents}
+
+
+COACH_MAX_TURNS = 20
+COACH_EXIT_WORDS = {"結束", "離開", "退出", "結束對話", "主選單", "選單", "menu"}
+
+
+def coach_disclaimer_flex() -> FlexMessage:
+    body = {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box", "layout": "vertical", "backgroundColor": C_PRIMARY,
+            "paddingAll": "20px", "spacing": "xs",
+            "contents": [
+                {"type": "text", "text": "🤖 AI 教練",
+                 "color": "#FFFFFF", "weight": "bold", "size": "xl"},
+                {"type": "text", "text": "使用前請閱讀",
+                 "color": "#FFFFFF", "size": "sm", "margin": "sm"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "md", "paddingAll": "16px",
+            "contents": [
+                {"type": "text", "text": "我能協助你：",
+                 "weight": "bold", "size": "sm", "color": C_TEXT_DARK},
+                _bullet("✅", "動作姿勢與技巧調整"),
+                _bullet("✅", "訓練計畫安排建議"),
+                _bullet("✅", "飲食原則與營養討論"),
+                _bullet("✅", "增肌減脂策略"),
+                {"type": "separator", "color": C_DIVIDER, "margin": "md"},
+                {"type": "text", "text": "請注意：",
+                 "weight": "bold", "size": "sm", "color": C_WARN, "margin": "md"},
+                _bullet("❗", "我不是醫師、物治師或營養師"),
+                _bullet("❗", "受傷 / 疾病 / 藥物相關 → 請就醫"),
+                _bullet("❗", "建議僅供參考，執行前請評估自身狀況"),
+                _bullet("❗", "訓練如有疼痛或不適，立刻停止"),
+                _bullet("❗", "不討論非健身相關話題"),
+            ],
+        },
+        "footer": {
+            "type": "box", "layout": "vertical", "spacing": "sm", "paddingAll": "12px",
+            "contents": [
+                {"type": "button", "style": "primary",
+                 "color": C_ACCENT, "height": "sm",
+                 "action": {"type": "postback",
+                            "label": "✅ 我同意，開始",
+                            "data": "action=coach_agree",
+                            "displayText": "我同意，開始對話"}},
+                {"type": "button", "style": "secondary", "height": "sm",
+                 "action": {"type": "message",
+                            "label": "❌ 取消", "text": "選單"}},
+            ],
+        },
+    }
+    return _flex("AI 教練使用須知", body)
+
+
+def _bullet(emoji: str, text: str) -> dict:
+    return {
+        "type": "box", "layout": "horizontal", "spacing": "sm",
+        "contents": [
+            {"type": "text", "text": emoji, "flex": 0, "size": "sm"},
+            {"type": "text", "text": text, "wrap": True, "size": "xs",
+             "color": C_TEXT_DARK, "flex": 5},
+        ],
+    }
+
+
 # ============================================================
 # 6. Quick Reply 與選單工具
 # ============================================================
@@ -3504,11 +3840,123 @@ def handle_strength_log(user_id: str, text: str, reply_token: str, state: dict) 
         return
 
 
-def calendar_section_placeholder(reply_token: str) -> None:
-    """日曆區（內容建置中）。"""
+def _period_dates(key: str) -> tuple:
+    """回傳 (start_date, end_date, label, next_key, next_label)。"""
+    today = datetime.now(TPE).date()
+    if key == "this_month":
+        start = today.replace(day=1)
+        end = today
+        label = today.strftime("%Y年 %m 月")
+        return (start, end, label, "last_month", "上個月")
+    if key == "last_month":
+        first_this = today.replace(day=1)
+        last_prev = first_this - timedelta(days=1)
+        start = last_prev.replace(day=1)
+        end = last_prev
+        label = start.strftime("%Y年 %m 月")
+        return (start, end, label, "last_7", "過去 7 天")
+    if key == "last_7":
+        start = today - timedelta(days=6)
+        end = today
+        label = "過去 7 天"
+        return (start, end, label, "this_month", "本月")
+    # default
+    start = today.replace(day=1)
+    return (start, today, today.strftime("%Y年 %m 月"), "last_month", "上個月")
+
+
+def show_results(user_id: str, reply_token: str,
+                 period: str = "this_month") -> None:
+    profile = get_profile(user_id)
+    if not profile:
+        reply_text(reply_token, "請先輸入「個人資料」建立檔案 🙏")
+        return
+    start, end, label, next_key, next_label = _period_dates(period)
+    report = get_monthly_report(user_id, start, end)
+    reply(reply_token, [results_flex(report, label, next_key, next_label)])
+
+
+def calendar_section_placeholder(reply_token: str, user_id: str = "") -> None:
+    """日曆已被「成果」取代，自動跳轉。"""
+    if user_id:
+        show_results(user_id, reply_token)
+    else:
+        reply_text(reply_token, "請輸入「成果」看本月統計")
+
+
+def start_ai_coach(user_id: str, reply_token: str) -> None:
+    """AI 教練入口：第一次先看免責聲明，同意過就直接開聊。"""
+    profile = get_profile(user_id)
+    if not profile:
+        reply_text(reply_token, "請先輸入「個人資料」建立檔案 🙏")
+        return
+    if not has_agreed_coach(user_id):
+        reply(reply_token, [coach_disclaimer_flex()])
+        return
+    _enter_coach_chat(user_id, reply_token)
+
+
+def _enter_coach_chat(user_id: str, reply_token: str) -> None:
+    """正式進入聊天模式：設 state、送歡迎訊息。"""
+    set_state(user_id, "coach_chat", "active", {"history": [], "turn": 0})
     reply_text(
         reply_token,
-        "📅 日曆功能建置中⋯\n敬請期待 ✨",
+        "🤖 嗨，我是你的 AI 健身教練。\n"
+        "想聊動作姿勢、訓練計畫、飲食增肌減脂，都可以問我。\n\n"
+        "🚪 想結束對話打「結束」或「主選單」",
+        qr(
+            ("❓ 動作姿勢問題", "我深蹲膝蓋會痛怎麼辦？"),
+            ("🥩 飲食建議", "減脂期蛋白質怎麼吃？"),
+            ("🚪 結束", "結束"),
+        ),
+    )
+
+
+def handle_coach_chat(user_id: str, text: str,
+                     reply_token: str, state: dict) -> None:
+    """聊天回合處理。"""
+    # 退出指令
+    if text.strip() in COACH_EXIT_WORDS:
+        clear_state(user_id)
+        reply(reply_token, [
+            TextMessage(text="🤖 對話結束，動起來吧 💪",
+                        quick_reply=qr(("📋 主選單", "選單"))),
+        ])
+        return
+
+    data = state.get("data") or {}
+    history = data.get("history") or []
+    turn = int(data.get("turn") or 0)
+
+    # 回合上限
+    if turn >= COACH_MAX_TURNS:
+        clear_state(user_id)
+        reply_text(
+            reply_token,
+            f"🤖 我們聊滿 {COACH_MAX_TURNS} 輪了，今天聊夠多 👍\n"
+            "去動一下吧，需要再打「AI教練」回來聊。",
+            qr(("📋 主選單", "選單")),
+        )
+        return
+
+    # 丟給 Gemini
+    answer = claude_coach_chat(history, text)
+
+    # 更新歷史 + 回合數
+    history.append({"role": "user", "text": text})
+    history.append({"role": "model", "text": answer})
+    # 只留最近 12 則，避免 state 越長越大
+    history = history[-12:]
+    set_state(user_id, "coach_chat", "active",
+              {"history": history, "turn": turn + 1})
+
+    remaining = COACH_MAX_TURNS - (turn + 1)
+    footer_hint = f"\n\n💬 剩 {remaining} 輪 · 打「結束」可離開" if remaining <= 5 else ""
+
+    reply_text(
+        reply_token,
+        f"{answer}{footer_hint}",
+        qr(("🚪 結束對話", "結束")),
     )
 
 
@@ -3847,6 +4295,9 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
         if flow == "custom_workout_create":
             handle_custom_workout_create(user_id, text, reply_token, state)
             return
+        if flow == "coach_chat":
+            handle_coach_chat(user_id, text, reply_token, state)
+            return
 
     # 3) 沒有狀態 → 走頂層指令
     # 個人資料
@@ -3948,7 +4399,13 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
         show_cardio_exercises_by_menu(menu_zh, reply_token)
         return
     if text in ("日曆", "📅 日曆", "行事曆"):
-        calendar_section_placeholder(reply_token)
+        calendar_section_placeholder(reply_token, user_id)
+        return
+    if text in ("成果", "📊 成果", "報告", "我的成果"):
+        show_results(user_id, reply_token)
+        return
+    if text in ("AI教練", "AI 教練", "🤖 AI 教練", "🤖 AI教練", "教練 Bot"):
+        start_ai_coach(user_id, reply_token)
         return
     if text in ("反思", "📝 反思"):
         start_reflection(user_id, reply_token)
@@ -4117,6 +4574,20 @@ def handle_postback(event):
                 reply_text(reply_token, "找不到這個菜單 🤔")
                 return
             reply(reply_token, [cardio_menu_detail_carousel_flex(menu_key)])
+            return
+
+        if action == "coach_agree":
+            profile = get_profile(user_id)
+            if not profile:
+                reply_text(reply_token, "請先輸入「個人資料」建立檔案 🙏")
+                return
+            mark_coach_agreed(user_id)
+            _enter_coach_chat(user_id, reply_token)
+            return
+
+        if action == "results":
+            period = params.get("period", "this_month")
+            show_results(user_id, reply_token, period)
             return
 
         if action == "cw_view":
