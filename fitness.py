@@ -2011,8 +2011,11 @@ WORKOUT_MENUS: dict[str, dict] = {
 }
 
 
+MUSCLE_IMG_VERSION = "v2"  # 圖檔有變動就 bump 這個版本，強制 LINE 重抓
+
+
 def _muscle_img_url(img_key: str) -> str:
-    return f"https://{SPACE_HOST}/muscles/{img_key}.png"
+    return f"https://{SPACE_HOST}/muscles/{img_key}.png?v={MUSCLE_IMG_VERSION}"
 
 
 def training_menu_flex() -> FlexMessage:
