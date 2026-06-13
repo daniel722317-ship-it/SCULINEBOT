@@ -3167,7 +3167,7 @@ def strength_overview_flex(records: dict) -> FlexMessage:
 
 def results_flex(report: dict, period_label: str,
                  next_period_key: str, next_period_label: str) -> FlexMessage:
-    """📊 統計報告 Flex 卡。"""
+    """📈 統計報告 Flex 卡。"""
 
     # 睡眠詳細
     sleep_detail = (
@@ -3216,7 +3216,7 @@ def results_flex(report: dict, period_label: str,
             "type": "box", "layout": "vertical",
             "backgroundColor": "#5DADE2", "paddingAll": "20px", "spacing": "xs",
             "contents": [
-                {"type": "text", "text": "📊 統計",
+                {"type": "text", "text": "📈 統計",
                  "color": "#FFFFFF", "weight": "bold", "size": "xl"},
                 {"type": "text", "text": period_label,
                  "color": "#FFFFFF", "size": "sm", "margin": "sm"},
@@ -4767,7 +4767,8 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
     if text in ("日曆", "📅 日曆", "行事曆"):
         calendar_section_placeholder(reply_token, user_id)
         return
-    if text in ("統計", "📊 統計", "成果", "📊 成果", "報告", "我的統計"):
+    if text in ("統計", "📈 統計", "📊 統計", "成果", "📊 成果",
+                "報告", "我的統計"):
         show_results(user_id, reply_token)
         return
     if text in ("AI教練", "AI 教練", "🤖 AI 教練", "🤖 AI教練", "教練 Bot"):
