@@ -3167,7 +3167,7 @@ def strength_overview_flex(records: dict) -> FlexMessage:
 
 def results_flex(report: dict, period_label: str,
                  next_period_key: str, next_period_label: str) -> FlexMessage:
-    """📊 成果報告 Flex 卡。"""
+    """📊 統計報告 Flex 卡。"""
 
     # 睡眠詳細
     sleep_detail = (
@@ -3216,7 +3216,7 @@ def results_flex(report: dict, period_label: str,
             "type": "box", "layout": "vertical",
             "backgroundColor": "#5DADE2", "paddingAll": "20px", "spacing": "xs",
             "contents": [
-                {"type": "text", "text": "📊 成果",
+                {"type": "text", "text": "📊 統計",
                  "color": "#FFFFFF", "weight": "bold", "size": "xl"},
                 {"type": "text", "text": period_label,
                  "color": "#FFFFFF", "size": "sm", "margin": "sm"},
@@ -3233,13 +3233,13 @@ def results_flex(report: dict, period_label: str,
                  "action": {"type": "postback",
                             "label": f"📅 {next_period_label}",
                             "data": f"action=results&period={next_period_key}",
-                            "displayText": f"看{next_period_label}成果"}},
+                            "displayText": f"看{next_period_label}統計"}},
                 {"type": "button", "style": "link", "height": "sm",
                  "action": {"type": "message", "label": "📋 主選單", "text": "選單"}},
             ],
         },
     }
-    return _flex(f"成果 · {period_label}", bubble)
+    return _flex(f"統計 · {period_label}", bubble)
 
 
 def _result_row(label: str, value: str, sub: str) -> dict:
@@ -4221,11 +4221,11 @@ def show_results(user_id: str, reply_token: str,
 
 
 def calendar_section_placeholder(reply_token: str, user_id: str = "") -> None:
-    """日曆已被「成果」取代，自動跳轉。"""
+    """日曆已被「統計」取代，自動跳轉。"""
     if user_id:
         show_results(user_id, reply_token)
     else:
-        reply_text(reply_token, "請輸入「成果」看本月統計")
+        reply_text(reply_token, "請輸入「統計」看本月資料")
 
 
 def start_ai_coach(user_id: str, reply_token: str) -> None:
@@ -4767,7 +4767,7 @@ def _route_text(user_id: str, text: str, reply_token: str) -> None:
     if text in ("日曆", "📅 日曆", "行事曆"):
         calendar_section_placeholder(reply_token, user_id)
         return
-    if text in ("成果", "📊 成果", "報告", "我的成果"):
+    if text in ("統計", "📊 統計", "成果", "📊 成果", "報告", "我的統計"):
         show_results(user_id, reply_token)
         return
     if text in ("AI教練", "AI 教練", "🤖 AI 教練", "🤖 AI教練", "教練 Bot"):
