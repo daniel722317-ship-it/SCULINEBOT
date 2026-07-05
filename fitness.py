@@ -85,6 +85,30 @@ configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+
+def _friendly_error(exc: Exception) -> str:
+    """依錯誤類型回不同友善訊息，讓使用者知道大概哪出問題。"""
+    msg = str(exc).lower()
+    # DNS / Supabase 連不上
+    if "name or service not known" in msg or "getaddrinfo" in msg:
+        return ("🔧 資料庫暫時連不上，請 1 分鐘後再試。\n"
+                "若持續發生請聯絡管理員。")
+    # Supabase 表不存在（PostgREST）
+    if "pgrst" in msg or "schema cache" in msg:
+        return ("🔧 資料庫維護中，請 30 秒後再試。\n"
+                "若持續發生請聯絡管理員。")
+    # Gemini 額度或限流
+    if "429" in msg or "quota" in msg or "resource_exhausted" in msg:
+        return ("🤖 AI 教練今日額度已用完，請明日再試。\n"
+                "其他功能正常，可以輸入「選單」繼續使用。")
+    if "gemini" in msg or "google" in msg:
+        return ("🤖 AI 教練暫時無回應，請稍後再試。\n"
+                "或輸入「選單」回主畫面。")
+    # 一般後備
+    return ("⚠️ 訊息暫時無法處理，請稍後再試。\n"
+            "或輸入「選單」回主畫面。")
+
+
 # ============================================================
 # 2. Supabase DB Helpers
 # ============================================================
@@ -4612,7 +4636,7 @@ def handle_text(event):
         _route_text(user_id, text, reply_token)
     except Exception as exc:  # noqa: BLE001
         logger.exception("route error: %s", exc)
-        reply_text(reply_token, "教練暫時打結了 🤯 請稍後再試或輸入「選單」回到主畫面。")
+        reply_text(reply_token, _friendly_error(exc))
 
 
 def _route_text(user_id: str, text: str, reply_token: str) -> None:
@@ -5044,7 +5068,7 @@ def handle_postback(event):
             return
     except Exception as exc:  # noqa: BLE001
         logger.exception("postback error: %s", exc)
-        reply_text(reply_token, "教練處理時打結了 🤯 請稍後再試。")
+        reply_text(reply_token, _friendly_error(exc))
 
 
 # ============================================================
@@ -5130,6 +5154,15 @@ def job_goal_review(freq: str):
         ])
 
 
+def _keepalive_ping():
+    """每 3 天輕量 query Supabase，防止免費層 7 天閒置自動 pause。"""
+    try:
+        sb.table("profiles").select("user_id").limit(1).execute()
+        logger.info("keepalive ping ok")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("keepalive ping failed: %s", exc)
+
+
 def init_scheduler():
     sched = BackgroundScheduler(timezone="Asia/Taipei")
     # 簡易模式（預設開啟）
@@ -5144,6 +5177,8 @@ def init_scheduler():
                   hour=21, minute=30, id="goal_daily")  # 移到 21:30 避開晚安回顧
     sched.add_job(lambda: job_goal_review("weekly"), "cron",
                   day_of_week="sun", hour=20, minute=0, id="goal_weekly")
+    # Keepalive：每 3 天 ping 一次 Supabase，防止免費層 7 天閒置自動 pause
+    sched.add_job(_keepalive_ping, "interval", days=3, id="keepalive")
     sched.start()
     logger.info("APScheduler started, jobs=%s", [j.id for j in sched.get_jobs()])
     return sched
